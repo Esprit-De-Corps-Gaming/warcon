@@ -237,6 +237,25 @@ promoted the same way (owners), or added to the org list while this server's own
 (server admins). Every dossier shows the player's standing on the org lists and lets an editor ban
 or unban org-wide, or hand out and withdraw a reserved slot, without leaving the page.
 
+Moving in from another panel, an owner can **import from CRCON** on the Ban list tab: Community
+RCON ([hll_rcon_tool](https://github.com/MarechJ/hll_rcon_tool)) has no export button, so save what
+its API returns and upload the file.
+
+```
+curl -H "Authorization: Bearer $CRCON_API_KEY" \
+  "https://your-crcon/api/get_blacklist_records?blacklist_id=0&page_size=1000" > bans.json
+```
+
+The answer from `get_blacklist`, a bare array of records, or a CSV with a `player_id` column are
+read too. The panel shows what the file holds before writing anything: reasons (with CRCON's
+`{player_name}`-style variables filled in), who banned, when, and each ban's expiry — with
+permanent bans, and CRCON's far-future "forever" dates, kept permanent. Records already on the org
+list are marked and not offered. Anything that cannot become a ban is listed with a reason: an
+expired ban (importing it would re-ban someone CRCON had let back in), or a player CRCON tracks by
+a Windows Store ID rather than a SteamID64, which the org lists cannot address. A player held on
+several blacklists is merged into their longest ban. Imported entries then fan out like any other,
+so they land on every server in the organisation.
+
 A ban with an **expiry** is lifted by the panel when the time comes: the entry moves to the list's
 history as expired and the next sync removes it from every server the panel applied it to. With
 **Members get a reserved slot** on (an owner's switch on the Reserved slots tab), every member of

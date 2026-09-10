@@ -9,6 +9,7 @@
 	import { describeSync, KIND_TITLE, STATE_TEXT, STATE_TONE } from '$lib/lists';
 	import Badge from '$lib/components/Badge.svelte';
 	import BanDialog from '$lib/components/BanDialog.svelte';
+	import CrconImport from '$lib/components/CrconImport.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import type {
 		ImportCandidate,
@@ -34,6 +35,8 @@
 	let search = $state('');
 	let busy = $state(false);
 	let banning = $state(false);
+	// import: a ban list exported from Community RCON (hll_rcon_tool)
+	let crcon = $state(false);
 	// import: entries the servers hold that the org list does not
 	let candidates = $state<ImportCandidate[] | null>(null);
 	let importing = $state(false);
@@ -220,6 +223,9 @@
 	</div>
 	<span class="ml-auto inline-flex gap-1.5">
 		<button class="btn" disabled={busy || !lists.servers.length} onclick={syncNow}>Sync now</button>
+		{#if kind === 'ban' && owner}
+			<button class="btn" onclick={() => (crcon = true)}>Import from CRCON</button>
+		{/if}
 		{#if kind === 'ban'}
 			<button class="btn btn-primary" onclick={() => (banning = true)}>Add ban</button>
 		{/if}
@@ -422,6 +428,10 @@
 	next sync, <Badge tone="err">failed</Badge> (hover for why), <Badge>local</Badge> already on that server
 	but added outside the panel, so the panel never removes it.
 </p>
+
+{#if crcon}
+	<CrconImport {org} onclose={() => (crcon = false)} />
+{/if}
 
 {#if banning}
 	<BanDialog

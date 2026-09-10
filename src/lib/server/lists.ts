@@ -26,8 +26,10 @@ import {
 	type ListRow
 } from './db/schema';
 import { requireSteamId } from './steam';
+import { CrconParseError, MAX_RECORDS, parseCrconExport } from './crcon';
 import { desiredFor, fanOut, MEMBER_PRIORITY, memberSlots } from './lists-sync';
 import type {
+	CrconImportPreview,
 	ImportCandidate,
 	ListEntryState,
 	ListEntryView,
@@ -627,6 +629,133 @@ export async function importEntries(
 		});
 	const sync = imported ? await fanOut(env, org) : { servers: [] };
 	return { imported, skipped: picks.length - imported, sync };
+}
+
+// ---- import: a ban list exported from Community RCON (hll_rcon_tool) -----------------------------
+
+/**
+ * Reads a CRCON export and says what importing it would do, without writing anything: which
+ * records could become bans, which are already on the org list, and which the file could not
+ * offer (see crcon.ts for why one gets dropped).
+ */
+export async function previewCrconImport(
+	env: Env,
+	org: OrgRow,
+	fileText: unknown
+): Promise<CrconImportPreview> {
+	const raw = typeof fileText === 'string' ? fileText : '';
+	let parsed;
+	try {
+		parsed = parseCrconExport(raw);
+	} catch (err) {
+		// The reader's messages are written for the operator who picked the file.
+		if (err instanceof CrconParseError) throw new ApiError(400, err.message, 'bad_export');
+		throw err;
+	}
+	const list = await listOf(env, org.id, 'ban');
+	const existing = parsed.records.length
+		? await env.db
+				.select({ steamId: listEntries.steamId })
+				.from(listEntries)
+				.where(
+					and(
+						eq(listEntries.listId, list.id),
+						isNull(listEntries.removedAt),
+						inArray(
+							listEntries.steamId,
+							parsed.records.map((r) => r.steamId)
+						)
+					)
+				)
+		: [];
+	const already = new Set(existing.map((e) => e.steamId));
+	return {
+		records: parsed.records.map((r) => ({ ...r, duplicate: already.has(r.steamId) })),
+		skipped: parsed.skipped,
+		total: parsed.total,
+		blacklists: parsed.blacklists
+	};
+}
+
+/**
+ * Puts chosen CRCON records on the org ban list. Unlike the adopt-from-servers import these are
+ * new to every server, so nothing is marked as already applied — the fan-out pushes them out and
+ * records where each landed. Records already on the list, and any whose ban lapsed between the
+ * preview and now, are counted as skipped rather than failing the whole import.
+ */
+export async function importCrconRecords(
+	env: Env,
+	req: Request,
+	actor: SessionUser,
+	org: OrgRow,
+	rowsIn: unknown
+): Promise<{ imported: number; skipped: number; sync: ListSyncSummary }> {
+	const now = new Date();
+	const rows = (Array.isArray(rowsIn) ? rowsIn : []).slice(0, MAX_RECORDS).map((p) => {
+		const o = (p ?? {}) as Record<string, unknown>;
+		const expiresRaw = str(o.expiresAt, 40);
+		const expires = expiresRaw ? new Date(expiresRaw) : null;
+		return {
+			steamId: requireSteamId(o.steamId),
+			reason: str(o.reason, 200),
+			// Not parseExpiry: a lapsed or unreadable date skips its row below rather than
+			// rejecting the whole file, which would strand the operator on one bad record.
+			expiresAt: expires && !Number.isNaN(expires.getTime()) ? expires : null
+		};
+	});
+	if (!rows.length) throw new ApiError(400, 'Nothing to import.');
+	const list = await listOf(env, org.id, 'ban');
+	const added: string[] = [];
+	await env.db.transaction(async (tx) => {
+		// Same lock as addEntry: two imports (or an import and an add) must not race past the
+		// duplicate check onto the partial unique index.
+		await tx.execute(sql`SELECT 1 FROM ${lists} WHERE ${lists.id} = ${list.id} FOR UPDATE`);
+		const held = await tx
+			.select({ steamId: listEntries.steamId })
+			.from(listEntries)
+			.where(and(eq(listEntries.listId, list.id), isNull(listEntries.removedAt)));
+		const already = new Set(held.map((h) => h.steamId));
+		for (const r of rows) {
+			if (already.has(r.steamId)) continue;
+			if (r.expiresAt && r.expiresAt.getTime() <= now.getTime()) continue;
+			await tx.insert(listEntries).values({
+				id: newId(),
+				listId: list.id,
+				steamId: r.steamId,
+				reason: r.reason,
+				expiresAt: r.expiresAt,
+				addedBy: actor.id,
+				addedByName: actor.username
+			});
+			already.add(r.steamId);
+			added.push(r.steamId);
+		}
+		if (added.length) await touch(tx, list.id);
+	});
+	const imported = added.length;
+	if (imported)
+		await writeAudit(env, req, {
+			actor,
+			orgId: org.id,
+			category: 'org',
+			action: 'list.import',
+			target: `${imported} ban${imported === 1 ? '' : 's'}`,
+			outcome: 'ok',
+			message: `Imported ${imported} ban${imported === 1 ? '' : 's'} from a Community RCON export into ${org.name}'s ban list`,
+			detail: {
+				orgId: org.id,
+				org: org.name,
+				kind: 'ban',
+				listId: list.id,
+				source: 'crcon',
+				imported,
+				// A big import would otherwise write thousands of IDs into one audit row; the
+				// entries themselves carry the full record.
+				steamIds: added.slice(0, 200)
+			}
+		});
+	const sync = imported ? await fanOut(env, org) : { servers: [] };
+	return { imported, skipped: rows.length - imported, sync };
 }
 
 /** The org's active ban and reserved entries for one player, for the dossier. */

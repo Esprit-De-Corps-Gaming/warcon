@@ -418,6 +418,38 @@ export interface ImportCandidate {
 	servers: { serverId: string; serverName: string; reason: string; bannedBy: string }[];
 }
 
+/** One ban read out of a Community RCON (hll_rcon_tool) blacklist export. */
+export interface CrconBanRecord {
+	steamId: string;
+	name: string;
+	reason: string;
+	adminName: string;
+	createdAt: string | null;
+	/** null = permanent */
+	expiresAt: string | null;
+	/** the CRCON blacklist it came from, when the file names one */
+	blacklist: string;
+}
+
+/** A record in the export that cannot become a ban, and why. */
+export interface CrconSkippedRecord {
+	playerId: string;
+	name: string;
+	reason: string;
+}
+
+/** What a CRCON export holds, checked against the org list but not yet imported. */
+export interface CrconImportPreview {
+	records: (CrconBanRecord & {
+		/** already on the org ban list, so importing would do nothing */
+		duplicate: boolean;
+	})[];
+	skipped: CrconSkippedRecord[];
+	/** records found in the file, before skipping and merging duplicates */
+	total: number;
+	blacklists: string[];
+}
+
 /** Per-server view of which bans and reserved slots the org lists manage; for the players page. */
 export interface ServerListsState {
 	canEditOrg: boolean;
