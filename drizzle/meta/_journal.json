@@ -78,6 +78,13 @@
       "when": 1789410069511,
       "tag": "0010_status_boards",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789431911334,
+      "tag": "0011_status_board_own_webhook",
+      "breakpoints": true
     }
   ]
 }

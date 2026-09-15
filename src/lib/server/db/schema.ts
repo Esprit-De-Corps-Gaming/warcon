@@ -505,9 +505,9 @@ export const webhooks = pgTable(
 );
 
 /**
- * A live status board: one Discord message per server, posted through one of the org's webhooks
- * and edited in place by the poller (server stats in one embed, the current match's top players
- * in another). The message id is what lets the poller edit rather than repost.
+ * A live status board: one Discord message per server, posted through the board's own channel
+ * webhook and edited in place by the poller (server stats in one embed, the current match's top
+ * players in another). The message id is what lets the poller edit rather than repost.
  */
 export const statusBoards = pgTable(
 	'status_boards',
@@ -519,9 +519,10 @@ export const statusBoards = pgTable(
 		serverId: text('server_id')
 			.notNull()
 			.references(() => servers.id, { onDelete: 'cascade' }),
-		webhookId: text('webhook_id')
-			.notNull()
-			.references(() => webhooks.id, { onDelete: 'cascade' }),
+		/** the channel's webhook URL, encrypted like the mirror webhooks' (a bearer credential) */
+		urlEnc: text('url_enc').notNull(),
+		/** host and webhook id, what the UI shows instead of the URL */
+		urlHint: text('url_hint').notNull().default(''),
 		enabled: boolean('enabled').notNull().default(true),
 		/** how often the poller re-renders the message; never below the poll interval */
 		intervalSeconds: integer('interval_seconds').notNull().default(60),

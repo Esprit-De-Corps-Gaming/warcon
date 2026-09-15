@@ -446,14 +446,13 @@ export interface WebhookView {
 	createdAt: string | null;
 }
 
-/** A live Discord card for one server, edited in place by the poller through one of the org's webhooks. */
+/** A live Discord card for one server, edited in place by the poller through the board's own webhook. */
 export interface StatusBoardView {
 	id: string;
 	serverId: string;
 	serverName: string;
-	webhookId: string;
-	webhookLabel: string;
-	webhookHint: string;
+	/** host and webhook id; the URL itself is never shown again */
+	urlHint: string;
 	enabled: boolean;
 	intervalSeconds: number;
 	topPlayers: number;

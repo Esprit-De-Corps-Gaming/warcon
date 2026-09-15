@@ -37,7 +37,7 @@
 				kind: 'board';
 				id: string | null;
 				serverId: string;
-				webhookId: string;
+				url: string;
 				intervalSeconds: number;
 				topPlayers: number;
 		  };
@@ -225,7 +225,7 @@
 			kind: 'board',
 			id: b?.id ?? null,
 			serverId: b?.serverId ?? data.orgServers[0]?.id ?? '',
-			webhookId: b?.webhookId ?? data.webhooks[0]?.id ?? '',
+			url: '',
 			intervalSeconds: b?.intervalSeconds ?? (INTERVALS.includes(60) ? 60 : INTERVALS[0]),
 			topPlayers: b?.topPlayers ?? 10
 		};
@@ -233,12 +233,12 @@
 	function saveBoard() {
 		const d = dialog;
 		if (!d || d.kind !== 'board') return;
-		const body = {
+		const body: Record<string, unknown> = {
 			serverId: d.serverId,
-			webhookId: d.webhookId,
 			intervalSeconds: d.intervalSeconds,
 			topPlayers: d.topPlayers
 		};
+		if (d.url.trim()) body.url = d.url.trim();
 		void run(
 			async () => {
 				if (d.id) await api('PATCH', `${orgPath}/boards/${d.id}`, body);
@@ -553,14 +553,14 @@
 				<button
 					class="ml-auto btn btn-sm btn-primary"
 					onclick={() => openBoard(null)}
-					disabled={!data.webhooks.length || !data.orgServers.length}>New board</button
+					disabled={!data.orgServers.length}>New board</button
 				>
 			</div>
 			<p class="mb-3 text-[13px] text-mist-400">
 				A live card per server in a channel: map, clock, players, scores and cash in one embed, the
-				current match's top players in another. Posted once through a webhook above and edited in
-				place as the poller samples, so the channel never fills up.
-				{#if !data.webhooks.length}<span class="text-warn">Add a webhook first.</span>{/if}
+				current match's top players in another. Each board has its own channel webhook (Discord:
+				channel settings → Integrations → Webhooks → copy URL); the card is posted once and edited
+				in place as the poller samples, so the channel never fills up.
 				{#if !data.pollerOn}<span class="text-warn"
 						>The poller is off (POLL_SECONDS=0), so boards only update on "Refresh".</span
 					>{/if}
@@ -577,10 +577,7 @@
 									class="ml-1">not posted yet</Badge
 								>{/if}
 						</div>
-						<div class="truncate text-[12px] text-mist-400">
-							via {b.webhookLabel}
-							<span class="font-mono text-[11px] text-mist-600">{b.webhookHint}</span>
-						</div>
+						<div class="truncate font-mono text-[11px] text-mist-600">{b.urlHint}</div>
 						<div class="text-[12px] text-mist-400">
 							every {intervalLabel(b.intervalSeconds)} · top {b.topPlayers}
 							{#if b.lastError}<div class="text-danger">
@@ -829,13 +826,15 @@
 				>
 			{/if}
 			<label class="block"
-				><span class="field-label">Channel (webhook)</span><select
-					class="input"
-					bind:value={d.webhookId}
-				>
-					{#each data.webhooks as w (w.id)}<option value={w.id}>{w.label} · {w.urlHint}</option
-						>{/each}
-				</select></label
+				><span class="field-label">Channel webhook URL{d.id ? ' (leave blank to keep)' : ''}</span
+				><input
+					class="input font-mono text-[12.5px]"
+					type="url"
+					bind:value={d.url}
+					placeholder="https://discord.com/api/webhooks/…"
+					required={!d.id}
+					autocomplete="off"
+				/></label
 			>
 			<div class="grid grid-cols-2 gap-3">
 				<label class="block"
@@ -862,7 +861,10 @@
 			</p>
 			<div class="flex justify-end gap-2 pt-2">
 				<button type="button" class="btn" data-close onclick={() => (dialog = null)}>Cancel</button>
-				<button type="submit" class="btn btn-primary" disabled={busy || !d.serverId || !d.webhookId}
+				<button
+					type="submit"
+					class="btn btn-primary"
+					disabled={busy || !d.serverId || (!d.id && !d.url.trim())}
 					>{d.id ? 'Save' : 'Add and post'}</button
 				>
 			</div>

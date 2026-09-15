@@ -314,9 +314,10 @@ again. **Test** posts a message right away; delivery failures show on the org pa
 **Status boards** put a live card for a server in a channel: one embed with the map, mode,
 lighting, match clock, players, faction scores (leader in bold, colours as dots), cash in play
 per faction and the last 24 hours (peak, players, matches), and a second embed with the current
-match's top players (kills, deaths, K/D, whether they have left). An owner picks the server, one
-of the webhooks above for the channel, how often to update (30 seconds to an hour, never faster
-than the poller) and how many players to list. The card is posted once and then **edited in
+match's top players (kills, deaths, K/D, whether they have left). An owner picks the server,
+pastes the channel's own webhook URL (a board does not share the mirror webhooks; the URL is
+stored encrypted the same way), and sets how often to update (30 seconds to an hour, never
+faster than the poller) and how many players to list. The card is posted once and then **edited in
 place** by the poller, so the channel never fills up; delete it in Discord and the next update
 posts a fresh one, remove the board and the card goes with it. When a server drops off the card
 turns red and says so. **Refresh** updates it right away.
@@ -480,7 +481,7 @@ GET  /api/servers/:id/players/:steamId                  dossier   POST .../steam
 POST /api/servers/:id/players/:steamId/notes {body}     DELETE .../notes/:noteId   PUT .../watch {watched,reason}
 GET/POST /api/servers/:id/triggers {kind,name,enabled,config}   PATCH/DELETE .../:triggerId   POST .../dry-run {kind,config}
 GET/POST /api/orgs/:id/webhooks {label,url,events,serverIds,enabled}   PATCH/DELETE .../:webhookId   POST .../:webhookId/test
-GET/POST /api/orgs/:id/boards {serverId,webhookId,intervalSeconds,topPlayers,enabled}   PATCH/DELETE .../:boardId   POST .../:boardId/refresh
+GET/POST /api/orgs/:id/boards {serverId,url,intervalSeconds,topPlayers,enabled}   PATCH/DELETE .../:boardId   POST .../:boardId/refresh
 GET  /api/orgs/:id/lists                                 the org's ban and reserved-slot lists, and the caller's role on them
 GET/POST /api/orgs/:id/lists/:kind/entries {steamId,reason,expiresAt,priority}   DELETE .../entries/:steamId   (kind = ban | reserve; ?includeRemoved=1)
 POST /api/orgs/:id/lists/sync                            push the lists to every org server now

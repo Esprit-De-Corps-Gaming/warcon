@@ -19,10 +19,10 @@ import {
 	samples,
 	servers,
 	statusBoards,
-	webhooks,
-	type StatusBoardRow,
-	type WebhookRow
+	type StatusBoardRow
 } from './db/schema';
+import { encryptSecret } from './crypto';
+import { validateWebhookUrl } from './webhooks';
 import { deleteDiscord, editDiscord, postDiscord, type PostResult } from './webhook-delivery';
 import { buildBoardEmbeds, type BoardInput } from './status-board-embeds';
 import type { Player, StatusBoardView, Status } from '$lib/types';
@@ -35,19 +35,12 @@ export const MAX_TOP_PLAYERS = 25;
 
 const iso = (v: Date | null | undefined): string | null => (v ? v.toISOString() : null);
 
-function shape(
-	b: StatusBoardRow,
-	serverName: string,
-	webhookLabel: string,
-	webhookHint: string
-): StatusBoardView {
+function shape(b: StatusBoardRow, serverName: string): StatusBoardView {
 	return {
 		id: b.id,
 		serverId: b.serverId,
 		serverName,
-		webhookId: b.webhookId,
-		webhookLabel,
-		webhookHint,
+		urlHint: b.urlHint,
 		enabled: b.enabled,
 		intervalSeconds: b.intervalSeconds,
 		topPlayers: b.topPlayers,
@@ -61,18 +54,12 @@ function shape(
 
 export async function listBoards(env: Env, orgId: string): Promise<StatusBoardView[]> {
 	const rows = await env.db
-		.select({
-			board: statusBoards,
-			serverName: servers.name,
-			webhookLabel: webhooks.label,
-			webhookHint: webhooks.urlHint
-		})
+		.select({ board: statusBoards, serverName: servers.name })
 		.from(statusBoards)
 		.innerJoin(servers, eq(servers.id, statusBoards.serverId))
-		.innerJoin(webhooks, eq(webhooks.id, statusBoards.webhookId))
 		.where(eq(statusBoards.orgId, orgId))
 		.orderBy(asc(servers.sortOrder), asc(servers.name), asc(statusBoards.createdAt));
-	return rows.map((r) => shape(r.board, r.serverName, r.webhookLabel, r.webhookHint));
+	return rows.map((r) => shape(r.board, r.serverName));
 }
 
 async function boardOf(env: Env, orgId: string, id: string): Promise<StatusBoardRow> {
@@ -82,16 +69,6 @@ async function boardOf(env: Env, orgId: string, id: string): Promise<StatusBoard
 		.where(and(eq(statusBoards.id, id), eq(statusBoards.orgId, orgId)))
 		.limit(1);
 	if (!row) throw new ApiError(404, 'Status board not found.');
-	return row;
-}
-
-async function hookOf(env: Env, orgId: string, id: string): Promise<WebhookRow> {
-	const [row] = await env.db
-		.select()
-		.from(webhooks)
-		.where(and(eq(webhooks.id, id), eq(webhooks.orgId, orgId)))
-		.limit(1);
-	if (!row) throw new ApiError(400, 'Pick one of the organisation’s webhooks for the channel.');
 	return row;
 }
 
@@ -123,14 +100,15 @@ export async function createBoard(
 	body: Record<string, unknown>
 ): Promise<StatusBoardView> {
 	const server = await serverOf(env, org.id, String(body.serverId ?? ''));
-	const hook = await hookOf(env, org.id, String(body.webhookId ?? ''));
+	const { url, hint } = validateWebhookUrl(body.url);
 	const [row] = await env.db
 		.insert(statusBoards)
 		.values({
 			id: newId(),
 			orgId: org.id,
 			serverId: server.id,
-			webhookId: hook.id,
+			urlEnc: encryptSecret(env, url),
+			urlHint: hint,
 			enabled: body.enabled === undefined ? true : !!body.enabled,
 			intervalSeconds: parseInterval(env, body.intervalSeconds, 60),
 			topPlayers: int(body.topPlayers, 10, 1, MAX_TOP_PLAYERS),
@@ -147,8 +125,7 @@ export async function createBoard(
 		outcome: 'ok',
 		detail: {
 			boardId: row.id,
-			webhookId: hook.id,
-			hint: hook.urlHint,
+			hint,
 			intervalSeconds: row.intervalSeconds,
 			topPlayers: row.topPlayers
 		}
@@ -167,14 +144,18 @@ export async function updateBoard(
 	const row = await boardOf(env, org.id, id);
 	const set: Partial<typeof statusBoards.$inferInsert> = {};
 	const changes: Record<string, unknown> = {};
-	if (body.webhookId !== undefined) {
-		const hook = await hookOf(env, org.id, String(body.webhookId));
-		if (hook.id !== row.webhookId) {
-			// A different channel: the old message cannot be edited from the new webhook.
+	if (typeof body.url === 'string' && body.url.trim()) {
+		const { url, hint } = validateWebhookUrl(body.url);
+		if (hint !== row.urlHint) {
+			// A different webhook: the old card cannot be edited through the new one.
 			await forgetMessage(env, row);
 			set.messageId = null;
-			changes.webhookId = set.webhookId = hook.id;
 		}
+		set.urlEnc = encryptSecret(env, url);
+		set.urlHint = hint;
+		set.lastError = '';
+		set.lastStatus = null;
+		changes.hint = hint;
 	}
 	if (body.intervalSeconds !== undefined)
 		changes.intervalSeconds = set.intervalSeconds = parseInterval(
@@ -209,12 +190,7 @@ export async function updateBoard(
 /** Best effort: take the card out of the channel when a board goes away or moves. */
 async function forgetMessage(env: Env, row: StatusBoardRow): Promise<void> {
 	if (!row.messageId) return;
-	const [hook] = await env.db
-		.select()
-		.from(webhooks)
-		.where(eq(webhooks.id, row.webhookId))
-		.limit(1);
-	if (hook) await deleteDiscord(env, hook, row.messageId);
+	await deleteDiscord(env, row, row.messageId);
 }
 
 export async function deleteBoard(
@@ -400,29 +376,8 @@ async function renderBoards(
 		ctx.status || !offlineOnly
 			? await currentMatchData(env, server.id, ctx.ts)
 			: { match: null, matchPlayers: [], day: null };
-	const hooks = new Map<string, WebhookRow | null>();
 	const results: PostResult[] = [];
 	for (const board of boards) {
-		if (!hooks.has(board.webhookId)) {
-			const [hook] = await env.db
-				.select()
-				.from(webhooks)
-				.where(eq(webhooks.id, board.webhookId))
-				.limit(1);
-			hooks.set(board.webhookId, hook ?? null);
-		}
-		const hook = hooks.get(board.webhookId);
-		if (!hook) {
-			results.push(
-				await record(
-					env,
-					board,
-					{ ok: false, status: 0, error: 'The webhook this board posts through is gone.' },
-					ctx.ts
-				)
-			);
-			continue;
-		}
 		const embeds = buildBoardEmbeds({
 			appName: env.APP_NAME || 'Warcon',
 			serverName: server.name,
@@ -447,12 +402,12 @@ async function renderBoards(
 					.limit(1);
 				if (!fresh) return { ok: false, status: 0, error: 'The board was removed.' };
 				let result = fresh.messageId
-					? await editDiscord(env, hook, fresh.messageId, { embeds })
+					? await editDiscord(env, board, fresh.messageId, { embeds })
 					: null;
 				let messageId = fresh.messageId;
 				if (!result || result.status === 404) {
 					// No card yet, or Discord lost it (deleted by hand, channel purged): post a fresh one.
-					result = await postDiscord(env, hook, { embeds });
+					result = await postDiscord(env, board, { embeds });
 					messageId = result.ok ? (result.messageId ?? null) : null;
 				}
 				return record(env, board, result, ctx.ts, messageId);
