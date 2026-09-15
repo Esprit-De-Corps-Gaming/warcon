@@ -252,6 +252,7 @@
 							<td>
 								{#if m.finalScores}
 									{#if m.winner}<b>{m.winner}</b> ·
+									{:else if m.finalScores.some((s) => s.score > 0)}<b>draw</b> ·
 									{/if}<span class="text-mist-400"
 										>{m.finalScores.map((s) => `${s.name} ${s.score}`).join(' · ')}</span
 									>

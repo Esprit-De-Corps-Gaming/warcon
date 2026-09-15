@@ -24,6 +24,12 @@ on a container host, with the database wherever you like.
 - **Analytics**: a background poller samples every server and keeps what the game does not:
   players online over time, cash in play per faction, uptime, time per map, busiest hours, player
   playtime and sessions, match history with results.
+- **Careers and leaderboards**: every match is recorded per player (kills, deaths, cash, time in
+  it, faction, win / loss / draw), built from RCON's counters as increments so a session that spans
+  several matches or a reconnect still counts. Each server has a leaderboard over the organisation
+  or itself, ranked by kills, K/D, kills per hour, playtime, matches, wins, win rate or cash, with
+  a playtime floor and a time range; each dossier carries the player's career, their rank on the
+  board, per-map and per-faction records, streaks and recent matches.
 - **Player dossiers**: click any player for their history across the organisation's servers
   (sessions, playtime, names used, K/D), the admin actions taken on them, shared notes and a
   watchlist, and, with a Steam key, their Steam persona, account age and VAC / game-ban record.
@@ -39,6 +45,9 @@ on a container host, with the database wherever you like.
   left alone.
 - **Discord mirror**: an org owner points a channel webhook at the audit trail and picks what to
   mirror (bans, commands, trigger actions, sign-ins…), per server if wanted.
+- **Discord status boards**: a live card per server in a channel, edited in place by the poller:
+  map, clock, players, faction scores and cash in one embed, the current match's top players in
+  another.
 - **Everything the official console does**: status, scoreboard, kick/ban/kill/whisper/change-team,
   broadcasts, map override, next map, end/restart match, map rotation editing and saving, reserved
   slots, bans, score tick, sponsor image, a live cash-in-play chart for the current match, and the
@@ -213,6 +222,28 @@ account, a ban on another server in the organisation, a name that resembles a ba
 the watchlist. It is a pointer for an admin to look closer, not a verdict: the RCON API exposes no
 aim, position or input data, so nothing here detects cheating itself.
 
+### Careers and leaderboards
+
+The game reports each connected player's kills, deaths and cash as counters that start over with
+every match and every reconnect. The poller turns consecutive readings into increments and keeps
+two records from them: the session (accumulated for as long as the player stays connected, so a
+session spanning three matches shows all three) and a row per player per match. When a match ends
+(the clock goes backwards, the map changes, or, after an outage, the clock says the match the
+panel knew is long gone), the faction with the top score wins, a tie at the top is a draw, and
+every player in the match is handed a result from the faction they last played for. A match that
+nobody scored in has no outcome.
+
+**Leaderboards** (a tab on every server) rank the players of the organisation's servers you can
+open, or of this server alone, over 7, 30 or 90 days or all time: by kills, K/D, kills per hour,
+time in matches, matches, wins, win rate or cash held, above a playtime floor you choose. A match
+counts as played after five minutes in it, win rate needs three decided matches, and ties share a
+rank. The **Career** section of a dossier shows the same numbers for one player with their rank on
+the all-time board, a win or loss streak, per-map and per-faction records and their recent
+matches. Match rows follow the sessions' retention (a year).
+
+What the game server exposes bounds all of this: kills, deaths and cash per player, nothing per
+weapon or vehicle, no kill feed and no in-game level, so those cannot appear here.
+
 ### Organisation ban and reserved lists
 
 Each organisation keeps a **ban list** and a **reserved-slot list** in the panel, under the
@@ -279,6 +310,16 @@ actions, player notes and watchlist changes, management changes, sign-ins; for e
 subset. Events are batched into one message per burst, IP addresses are never sent, and the URL
 (which lets anyone post to the channel) is stored encrypted with `ENCRYPTION_KEY` and never shown
 again. **Test** posts a message right away; delivery failures show on the org page.
+
+**Status boards** put a live card for a server in a channel: one embed with the map, mode,
+lighting, match clock, players, faction scores (leader in bold, colours as dots), cash in play
+per faction and the last 24 hours (peak, players, matches), and a second embed with the current
+match's top players (kills, deaths, K/D, whether they have left). An owner picks the server, one
+of the webhooks above for the channel, how often to update (30 seconds to an hour, never faster
+than the poller) and how many players to list. The card is posted once and then **edited in
+place** by the poller, so the channel never fills up; delete it in Discord and the next update
+posts a fresh one, remove the board and the card goes with it. When a server drops off the card
+turns red and says so. **Refresh** updates it right away.
 
 ### Accounts and personal data
 
@@ -396,19 +437,22 @@ src/lib/server/actions.ts      every panel action -> role level + /v1 call(s)
 src/lib/server/rcon-run.ts     /api/servers/:id/rcon/:action dispatcher with audit rows
 src/lib/server/rcon.ts         WardogsClient (Bearer auth, JSON/text calls, demo routing)
 src/lib/server/transport.ts    fetch to the game server
-src/lib/server/poller.ts       background sampler (leader-elected via advisory lock): samples, sessions, matches, ban snapshots, triggers
+src/lib/server/poller.ts       background sampler (leader-elected via advisory lock): samples, sessions, matches and per-match player rows, ban snapshots, triggers
+src/lib/server/match-track.ts  counter increments, match boundaries and win / loss / draw (pure)
+src/lib/server/career.ts       leaderboard and career queries over player_match_stats
 src/lib/server/players.ts      dossiers, notes, watchlist, per-player marks (risk) for the players table
 src/lib/server/steam.ts        Steam Web API lookups cached in steam_profiles
 src/lib/server/risk.ts         advisory risk score and name resemblance (pure)
 src/lib/server/trigger-rules.ts / triggers.ts   trigger settings and verdicts (pure) / the per-tick engine and dry runs
-src/lib/server/webhooks.ts     Discord webhook records; webhook-delivery.ts batches audit rows to Discord
+src/lib/server/webhooks.ts     Discord webhook records; webhook-delivery.ts batches audit rows to Discord, posts and edits messages
+src/lib/server/status-board.ts live Discord status boards (records, poller hook); status-board-embeds.ts renders the two embeds (pure)
 src/lib/server/analytics.ts    analytics queries per server and range
 src/lib/server/audit.ts        audit writer/query with secret redaction
 src/lib/server/mockgame.ts     in-process imitation of the WDRCON API for demo/testing
 src/lib/config-doc.ts / config-fields.ts   ServerSettings.ini parser and line-level setter (pure, tested) / the keys the config form manages
 src/lib/components/            Modal, MapPicker, PopulationChart, CashChart, ConfigForm, Toasts, badges…
 src/routes/(auth)/             /sign-in, /setup, /join/[token] (form actions)     src/routes/sign-out
-src/routes/(app)/              dashboard, /server/[id]/{,players,players/[steamId],bans,rotation,config,automation,analytics,log}, /audit, /orgs, /orgs/[id]/{,bans,reserved}, /users, /servers, /account
+src/routes/(app)/              dashboard, /server/[id]/{,players,players/[steamId],bans,rotation,config,automation,analytics,leaderboards,log}, /audit, /orgs, /orgs/[id]/{,bans,reserved}, /users, /servers, /account
 src/routes/api/                JSON API (below)
 docs/wardogs-api.md            the reverse-engineered game-server API
 ```
@@ -429,12 +473,14 @@ GET/POST /api/servers {orgId,...}  PATCH/DELETE /api/servers/:id  POST /api/serv
 GET/PUT /api/servers/:id/grants {grants:[{userId,role}]}   GET /api/servers/:id/summary
 GET|POST /api/servers/:id/rcon/:action   (GET for reads with query params, POST JSON for mutations)
 GET  /api/servers/:id/analytics?range=24h|7d|30d
+GET  /api/servers/:id/leaderboards?scope=server|org&range=7d|30d|90d|all&sort=kills|kd|kph|minutes|matches|wins|winRate|deaths|cash&min=<minutes>
 GET  /api/servers/:id/cash?since=<iso>                  cash-in-play samples since a moment (24 h at most), seeds the dashboard chart
 GET  /api/servers/:id/players/marks?ids=a,b&names=…     watchlist / first-visit / risk per connected player
 GET  /api/servers/:id/players/:steamId                  dossier   POST .../steam (refresh Steam data)
 POST /api/servers/:id/players/:steamId/notes {body}     DELETE .../notes/:noteId   PUT .../watch {watched,reason}
 GET/POST /api/servers/:id/triggers {kind,name,enabled,config}   PATCH/DELETE .../:triggerId   POST .../dry-run {kind,config}
 GET/POST /api/orgs/:id/webhooks {label,url,events,serverIds,enabled}   PATCH/DELETE .../:webhookId   POST .../:webhookId/test
+GET/POST /api/orgs/:id/boards {serverId,webhookId,intervalSeconds,topPlayers,enabled}   PATCH/DELETE .../:boardId   POST .../:boardId/refresh
 GET  /api/orgs/:id/lists                                 the org's ban and reserved-slot lists, and the caller's role on them
 GET/POST /api/orgs/:id/lists/:kind/entries {steamId,reason,expiresAt,priority}   DELETE .../entries/:steamId   (kind = ban | reserve; ?includeRemoved=1)
 POST /api/orgs/:id/lists/sync                            push the lists to every org server now
@@ -456,8 +502,12 @@ configApply raw` (admin).
 
 - Analytics are derived from polling: player sessions are accurate to one interval, and match
   boundaries are inferred from the match clock and map changes. Samples are kept for 90 days
-  (a TimescaleDB retention policy, or the poller's own prune on plain Postgres), sessions and
-  matches for a year.
+  (a TimescaleDB retention policy, or the poller's own prune on plain Postgres), sessions,
+  matches and per-match player rows for a year.
+- Kills and deaths are read as counters and stored as increments, so a kill made between two
+  polls in which a match ended lands in whichever match the panel saw next; totals are exact,
+  the split between adjacent matches is accurate to one interval. Session rows from before this
+  version hold the last raw reading and continue from there.
 - Several Warcon replicas can share one database; a Postgres advisory lock makes exactly one of
   them the poller.
 - Password hashing is Better Auth's default scrypt, which runs natively via `node:crypto` on Bun.

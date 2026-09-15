@@ -64,6 +64,20 @@
       "when": 1788996826671,
       "tag": "0008_jsonb_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789409151499,
+      "tag": "0009_player_match_stats",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789410069511,
+      "tag": "0010_status_boards",
+      "breakpoints": true
     }
   ]
 }

@@ -8,9 +8,18 @@ import { publicMessage } from './http';
 import type { OrgRow, ServerRow } from './access';
 import { ACTIONS } from './actions';
 import { WardogsClient } from './rcon';
-import { matches, organizations, playerSessions, samples, servers } from './db/schema';
+import {
+	matches,
+	organizations,
+	playerMatchStats,
+	playerSessions,
+	samples,
+	servers
+} from './db/schema';
 import { getProfiles, steamEnabled } from './steam';
 import { runTriggers } from './triggers';
+import { counterDelta, matchBoundary, matchOutcome, type Score } from './match-track';
+import { markBoardsOffline, refreshBoards } from './status-board';
 import {
 	expireEntries,
 	liveObserved,
@@ -134,12 +143,13 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 			players = ((await ACTIONS.players.run(client, {})) as { players: Player[] }).players;
 		} catch (err) {
 			m.failures++;
+			const problem = publicMessage(err, 'Poll failed.').slice(0, 300);
 			await env.db.insert(samples).values({
 				serverId: server.id,
 				ts,
 				ok: false,
 				latencyMs: Date.now() - started,
-				error: publicMessage(err, 'Poll failed.').slice(0, 300)
+				error: problem
 			});
 			if (m.failures === OFFLINE_AFTER_FAILURES) {
 				await env.db
@@ -147,6 +157,7 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 					.set({ leftAt: sql`${playerSessions.lastSeen}` })
 					.where(and(eq(playerSessions.serverId, server.id), isNull(playerSessions.leftAt)));
 				m.lastMatchSeconds = null;
+				await markBoardsOffline(env, server, problem, ts);
 			}
 			return;
 		}
@@ -170,8 +181,10 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 			cash: cashByFaction(status, players),
 			latencyMs: Date.now() - started
 		});
-		const { joined, firstVisit } = await reconcileSessions(env, server.id, ts, players);
-		await reconcileMatch(env, server.id, ts, status, m, scores);
+		// The match first: when this sample starts a new one, the players' counters have reset with
+		// it, and their increments belong to the new match.
+		const matchId = await reconcileMatch(env, server.id, ts, status, m, scores);
+		const { joined, firstVisit } = await reconcileSessions(env, server.id, ts, players, matchId);
 		const observed = await refreshLists(env, server, client, m, ts).catch((err) => {
 			console.warn('[warcon] ban list snapshot', publicMessage(err));
 			return null;
@@ -188,6 +201,8 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 			return null;
 		});
 		if (synced?.observed) m.reserved = new Set(synced.observed.reserved);
+		// Discord status boards whose interval has elapsed; never throws.
+		await refreshBoards(env, server, { status, players, ts });
 		// Warm the Steam cache for newcomers so the players table and dossier have their data.
 		if (joined.length && steamEnabled(env))
 			await getProfiles(
@@ -230,39 +245,58 @@ async function refreshLists(
 	return observed;
 }
 
-/** Returns who joined this tick (no open session before it) and which of those were never seen on this server. */
+/**
+ * Turns this sample's player list into sessions and per-match rows, and returns who joined this
+ * tick (no open session before it) and which of those were never seen on this server. Kills and
+ * deaths are stored as increments over the previous reading (see match-track.ts): the session
+ * accumulates them for as long as the player stays, the match row for as long as the match runs.
+ */
 async function reconcileSessions(
 	env: Env,
 	serverId: string,
 	ts: Date,
-	players: Player[]
+	players: Player[],
+	matchId: number | null
 ): Promise<{ joined: Player[]; firstVisit: Set<string> }> {
 	const open = await env.db
-		.select({ id: playerSessions.id, steamId: playerSessions.steamId })
+		.select({
+			id: playerSessions.id,
+			steamId: playerSessions.steamId,
+			kills: playerSessions.kills,
+			deaths: playerSessions.deaths,
+			rawKills: playerSessions.rawKills,
+			rawDeaths: playerSessions.rawDeaths
+		})
 		.from(playerSessions)
 		.where(and(eq(playerSessions.serverId, serverId), isNull(playerSessions.leftAt)));
-	const byId = new Map(open.map((s) => [s.steamId, s.id]));
+	const byId = new Map(open.map((s) => [s.steamId, s]));
 	const seen = new Set<string>();
 	const joined: Player[] = [];
 	const firstVisit = new Set<string>();
 	await env.db.transaction(async (tx) => {
 		const joins: (typeof playerSessions.$inferInsert)[] = [];
+		const inMatch: (typeof playerMatchStats.$inferInsert)[] = [];
 		for (const p of players) {
 			if (!p.steamId || seen.has(p.steamId)) continue;
 			seen.add(p.steamId);
-			const id = byId.get(p.steamId);
-			if (id !== undefined) {
+			const row = byId.get(p.steamId);
+			// Rows from before increments were tracked hold the last raw reading in kills/deaths.
+			const dk = counterDelta(p.kills, row ? (row.rawKills ?? row.kills) : null);
+			const dd = counterDelta(p.deaths, row ? (row.rawDeaths ?? row.deaths) : null);
+			if (row) {
 				await tx
 					.update(playerSessions)
 					.set({
 						name: p.name,
 						faction: p.faction,
 						lastSeen: ts,
-						kills: p.kills,
-						deaths: p.deaths,
-						cash: p.cash
+						kills: row.kills + dk,
+						deaths: row.deaths + dd,
+						cash: p.cash,
+						rawKills: p.kills,
+						rawDeaths: p.deaths
 					})
-					.where(eq(playerSessions.id, id));
+					.where(eq(playerSessions.id, row.id));
 			} else {
 				joined.push(p);
 				joins.push({
@@ -272,12 +306,42 @@ async function reconcileSessions(
 					faction: p.faction,
 					joinedAt: ts,
 					lastSeen: ts,
-					kills: p.kills,
-					deaths: p.deaths,
-					cash: p.cash
+					kills: dk,
+					deaths: dd,
+					cash: p.cash,
+					rawKills: p.kills,
+					rawDeaths: p.deaths
 				});
 			}
+			if (matchId !== null)
+				inMatch.push({
+					matchId,
+					serverId,
+					steamId: p.steamId,
+					name: p.name,
+					faction: p.faction,
+					firstSeen: ts,
+					lastSeen: ts,
+					kills: dk,
+					deaths: dd,
+					cash: p.cash
+				});
 		}
+		if (inMatch.length)
+			await tx
+				.insert(playerMatchStats)
+				.values(inMatch)
+				.onConflictDoUpdate({
+					target: [playerMatchStats.matchId, playerMatchStats.steamId],
+					set: {
+						name: sql`excluded.name`,
+						faction: sql`excluded.faction`,
+						lastSeen: ts,
+						kills: sql`${playerMatchStats.kills} + excluded.kills`,
+						deaths: sql`${playerMatchStats.deaths} + excluded.deaths`,
+						cash: sql`excluded.cash`
+					}
+				});
 		if (joins.length) {
 			const known = await tx
 				.selectDistinct({ steamId: playerSessions.steamId })
@@ -305,43 +369,51 @@ async function reconcileSessions(
 	return { joined, firstVisit };
 }
 
+/** Opens and closes matches; returns the id of the match this sample belongs to. */
 async function reconcileMatch(
 	env: Env,
 	serverId: string,
 	ts: Date,
 	status: Status,
 	m: Memory,
-	scores: { name: string; score: number }[]
-): Promise<void> {
+	scores: Score[]
+): Promise<number | null> {
 	const [current] = await env.db
-		.select({ id: matches.id, map: matches.map, peakPlayers: matches.peakPlayers })
+		.select({
+			id: matches.id,
+			map: matches.map,
+			startedAt: matches.startedAt,
+			peakPlayers: matches.peakPlayers
+		})
 		.from(matches)
 		.where(and(eq(matches.serverId, serverId), isNull(matches.endedAt)))
 		.orderBy(desc(matches.id))
 		.limit(1);
 	const secs = status.matchSeconds ?? null;
-	// A new match: the map changed, or the clock went backwards (restart / rotation advance).
-	const restarted = secs !== null && m.lastMatchSeconds !== null && secs < m.lastMatchSeconds - 30;
-	const mapChanged = !!current && current.map !== status.map;
+	const boundary = matchBoundary({
+		matchSeconds: secs,
+		lastMatchSeconds: m.lastMatchSeconds,
+		current: current ?? null,
+		map: status.map,
+		ts
+	});
 	m.lastMatchSeconds = secs;
-	if (current && (restarted || mapChanged)) {
-		const last = (m.lastScores as { name: string; score: number }[] | null) ?? scores;
-		const winner = [...last].sort((a, b) => b.score - a.score)[0]?.name ?? null;
-		await env.db
-			.update(matches)
-			.set({ endedAt: ts, finalScores: last, winner })
-			.where(eq(matches.id, current.id));
-	}
-	if (!current || restarted || mapChanged) {
+	if (current && boundary) await closeMatch(env, current.id, ts, m, scores, boundary);
+	let id = current?.id ?? null;
+	if (!current || boundary) {
 		const startedAt = secs !== null ? new Date(ts.getTime() - secs * 1000) : ts;
-		await env.db.insert(matches).values({
-			serverId,
-			startedAt,
-			map: status.map,
-			experiences: status.experiences.join('+'),
-			lighting: status.lighting,
-			peakPlayers: status.playerCount
-		});
+		const [row] = await env.db
+			.insert(matches)
+			.values({
+				serverId,
+				startedAt,
+				map: status.map,
+				experiences: status.experiences.join('+'),
+				lighting: status.lighting,
+				peakPlayers: status.playerCount
+			})
+			.returning({ id: matches.id });
+		id = row?.id ?? null;
 	} else if (status.playerCount > current.peakPlayers) {
 		await env.db
 			.update(matches)
@@ -349,6 +421,39 @@ async function reconcileMatch(
 			.where(eq(matches.id, current.id));
 	}
 	m.lastScores = scores;
+	return id;
+}
+
+/**
+ * Ends a match with the last scores seen while it ran and hands every player in it their result.
+ * After an outage (`stale`) the previous scores belong to some other match, or to nothing: the
+ * match closes with no outcome rather than a wrong one.
+ */
+async function closeMatch(
+	env: Env,
+	matchId: number,
+	ts: Date,
+	m: Memory,
+	scores: Score[],
+	boundary: 'restarted' | 'map' | 'stale'
+): Promise<void> {
+	const last = boundary === 'stale' ? null : ((m.lastScores as Score[] | null) ?? scores);
+	const outcome = matchOutcome(last);
+	await env.db.transaction(async (tx) => {
+		await tx
+			.update(matches)
+			.set({ endedAt: ts, finalScores: last, winner: outcome.winner })
+			.where(eq(matches.id, matchId));
+		if (!outcome.scored) return;
+		await tx
+			.update(playerMatchStats)
+			.set({
+				result: outcome.draw
+					? sql`CASE WHEN ${playerMatchStats.faction} IS NULL OR ${playerMatchStats.faction} = '' THEN NULL ELSE 'draw' END`
+					: sql`CASE WHEN ${playerMatchStats.faction} IS NULL OR ${playerMatchStats.faction} = '' THEN NULL WHEN ${playerMatchStats.faction} = ${outcome.winner} THEN 'win' ELSE 'loss' END`
+			})
+			.where(eq(playerMatchStats.matchId, matchId));
+	});
 }
 
 async function prune(env: Env): Promise<void> {
@@ -361,5 +466,6 @@ async function prune(env: Env): Promise<void> {
 	await env.db
 		.delete(playerSessions)
 		.where(and(lt(playerSessions.leftAt, cutSessions), gt(playerSessions.id, 0)));
+	await env.db.delete(playerMatchStats).where(lt(playerMatchStats.lastSeen, cutSessions));
 	await env.db.delete(matches).where(lt(matches.endedAt, cutSessions));
 }

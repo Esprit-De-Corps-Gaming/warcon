@@ -16,6 +16,7 @@
 		['/config', 'Configuration'],
 		['/automation', 'Automation'],
 		['/analytics', 'Analytics'],
+		['/leaderboards', 'Leaderboards'],
 		['/log', 'Server log']
 	] as const;
 	let base = $derived(`/server/${encodeURIComponent(data.server.id)}`);

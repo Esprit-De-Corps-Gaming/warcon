@@ -91,6 +91,7 @@ export interface Embed {
 	color: number;
 	timestamp: string;
 	footer?: { text: string };
+	fields?: { name: string; value: string; inline?: boolean }[];
 }
 
 const COLORS = { ok: 0x7bc462, error: 0xd86060, denied: 0x8a8a90 } as const;
@@ -219,13 +220,43 @@ export interface PostResult {
 	status: number;
 	error: string;
 	retryAfterMs?: number;
+	/** the id of the message posted or edited, when Discord returned one */
+	messageId?: string;
+}
+
+export interface DiscordPayload {
+	content?: string;
+	embeds?: Embed[];
 }
 
 /** One POST to the webhook. Never throws. */
-export async function postDiscord(
+export const postDiscord = (
 	env: Env,
 	hook: Pick<WebhookRow, 'urlEnc'>,
-	payload: { content?: string; embeds?: Embed[] }
+	payload: DiscordPayload
+): Promise<PostResult> => discordRequest(env, hook, 'POST', '?wait=true', payload);
+
+/** Edits a message this webhook posted earlier; 404 means Discord no longer has it. Never throws. */
+export const editDiscord = (
+	env: Env,
+	hook: Pick<WebhookRow, 'urlEnc'>,
+	messageId: string,
+	payload: DiscordPayload
+): Promise<PostResult> => discordRequest(env, hook, 'PATCH', `/messages/${messageId}`, payload);
+
+/** Removes a message this webhook posted earlier. Never throws. */
+export const deleteDiscord = (
+	env: Env,
+	hook: Pick<WebhookRow, 'urlEnc'>,
+	messageId: string
+): Promise<PostResult> => discordRequest(env, hook, 'DELETE', `/messages/${messageId}`);
+
+async function discordRequest(
+	env: Env,
+	hook: Pick<WebhookRow, 'urlEnc'>,
+	method: 'POST' | 'PATCH' | 'DELETE',
+	suffix: string,
+	payload?: DiscordPayload
 ): Promise<PostResult> {
 	let url: string;
 	try {
@@ -234,14 +265,17 @@ export async function postDiscord(
 		return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
 	}
 	try {
-		const res = await fetch(url + '?wait=true', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				username: env.APP_NAME || 'Warcon',
-				allowed_mentions: { parse: [] },
-				...payload
-			}),
+		const res = await fetch(url + suffix, {
+			method,
+			headers: payload ? { 'content-type': 'application/json' } : {},
+			body: payload
+				? JSON.stringify({
+						// the username only applies to a new message; an edit keeps the original's
+						...(method === 'POST' ? { username: env.APP_NAME || 'Warcon' } : {}),
+						allowed_mentions: { parse: [] },
+						...payload
+					})
+				: undefined,
 			signal: AbortSignal.timeout(10_000)
 		});
 		if (res.status === 429) {
@@ -262,7 +296,9 @@ export async function postDiscord(
 				error: `Discord answered ${res.status}. ${text}`.trim()
 			};
 		}
-		return { ok: true, status: res.status, error: '' };
+		const body = (await res.json().catch(() => null)) as { id?: unknown } | null;
+		const messageId = typeof body?.id === 'string' ? body.id : undefined;
+		return { ok: true, status: res.status, error: '', ...(messageId ? { messageId } : {}) };
 	} catch (err) {
 		return {
 			ok: false,

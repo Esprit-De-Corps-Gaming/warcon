@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { api, errorMessage, rconPost } from '$lib/api';
-	import { can, fmtNum, fmtTime } from '$lib/format';
+	import { can, expSetLabel, fmtNum, fmtTime, mapLabel } from '$lib/format';
 	import { toast } from '$lib/toast.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import BanDialog from '$lib/components/BanDialog.svelte';
+	import FactionChip from '$lib/components/FactionChip.svelte';
 	import { describeSync, STATE_TONE } from '$lib/lists';
 	import type { DossierView, ListSyncSummary } from '$lib/types';
 	import type { PageProps } from './$types';
@@ -98,6 +99,21 @@
 	const minutes = (m: number) => (m >= 90 ? `${(m / 60).toFixed(1)} h` : `${m} min`);
 	const kd = (k: number, dd: number) => (dd ? (k / dd).toFixed(2) : k ? `${k}.00` : '—');
 	const RISK_TONE = { low: 'ok', medium: 'warn', high: 'err' } as const;
+	const RESULT_TONE = { win: 'ok', loss: 'err', draw: 'info' } as const;
+	let c = $derived(d.career);
+	const ordinal = (n: number) => {
+		const s = n % 100;
+		if (s >= 11 && s <= 13) return `${n}th`;
+		return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+	};
+	/** "3rd of 41" for a rank on the board, or why there is none */
+	const rankText = (r: number | null) =>
+		r === null ? (c.ranks.eligible ? 'unranked' : '—') : `${ordinal(r)} of ${c.ranks.eligible}`;
+	const winPct = (b: { wins: number; losses: number; draws: number }) => {
+		const n = b.wins + b.losses + b.draws;
+		return n ? `${Math.round((b.wins / n) * 100)}%` : '—';
+	};
+	let maxMapMinutes = $derived(Math.max(1, ...c.maps.map((m) => m.minutes)));
 	const ACTION_LABEL: Record<string, string> = {
 		'rcon.kick': 'kick',
 		'rcon.ban': 'ban',
@@ -174,6 +190,135 @@
 				{/each}
 			</div>
 		{/if}
+
+		<div class="panel">
+			<div class="mb-3 flex flex-wrap items-center gap-2">
+				<span class="label-sm mb-0!">Career</span>
+				{#if c.streak && c.streak.length >= 2}
+					<Badge tone={RESULT_TONE[c.streak.result]}
+						>{c.streak.length}
+						{c.streak.result === 'win' ? 'wins' : c.streak.result === 'loss' ? 'losses' : 'draws'} in
+						a row</Badge
+					>
+				{/if}
+				<a
+					href="/server/{encodeURIComponent(id)}/leaderboards"
+					class="ml-auto text-[12px] text-accent hover:underline">Leaderboards →</a
+				>
+			</div>
+			{#if c.matches || c.recent.length}
+				<div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+					{#each [['Matches', fmtNum(c.matches), rankText(c.ranks.minutes) + ' by playtime'], ['Record', `${c.wins}–${c.losses}–${c.draws}`, c.winRate === null ? 'win % after 3 decided' : `${c.winRate}% · ${rankText(c.ranks.winRate)}`], ['Kills', fmtNum(c.kills), rankText(c.ranks.kills)], ['K/D', c.kd.toFixed(2), rankText(c.ranks.kd)], ['Kills / h', c.kph.toFixed(1), rankText(c.ranks.kph)], ['Best match', fmtNum(c.bestKills) + ' kills', c.since ? `since ${fmtTime(c.since).slice(0, 12)}` : '']] as [label, value, sub] (label)}
+						<div class="rounded-ctl border border-black bg-ink-950 px-3 py-2.5">
+							<div class="caps text-mist-400">{label}</div>
+							<div class="mt-0.5 font-display text-xl font-semibold tabular">{value}</div>
+							<div class="text-[11.5px] text-mist-600">{sub}</div>
+						</div>
+					{/each}
+				</div>
+
+				<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+					<div>
+						<span class="label-sm">By map</span>
+						{#each c.maps as m (m.map)}
+							<div class="mb-2.5">
+								<div class="mb-1 flex items-baseline justify-between gap-2 text-[13px]">
+									<span
+										>{m.map ? mapLabel(data.catalog, m.map) : 'Unknown map'}
+										<span class="text-mist-600"
+											>· {m.matches} match{m.matches === 1 ? '' : 'es'} · {winPct(m)} won · K/D {kd(
+												m.kills,
+												m.deaths
+											)}</span
+										></span
+									><span class="font-mono text-mist-400 tabular">{minutes(m.minutes)}</span>
+								</div>
+								<div class="progress">
+									<span class="progress-bar" style="width:{(m.minutes / maxMapMinutes) * 100}%"
+									></span>
+								</div>
+							</div>
+						{:else}
+							<div class="text-[13px] text-mist-600">No completed matches yet.</div>
+						{/each}
+					</div>
+					<div>
+						<span class="label-sm">By faction</span>
+						<div class="table-wrap">
+							<table>
+								<thead
+									><tr
+										><th>Faction</th><th class="num">Matches</th><th class="num">W / L / D</th><th
+											class="num">K/D</th
+										><th class="num">Time</th></tr
+									></thead
+								>
+								<tbody>
+									{#each c.factions as f (f.faction)}
+										<tr>
+											<td><FactionChip faction={f.faction} /></td>
+											<td class="num">{f.matches}</td>
+											<td class="num whitespace-nowrap">{f.wins} / {f.losses} / {f.draws}</td>
+											<td class="num">{kd(f.kills, f.deaths)}</td>
+											<td class="num">{minutes(f.minutes)}</td>
+										</tr>
+									{:else}
+										<tr><td colspan="5" class="py-4 text-center text-mist-600">—</td></tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+
+				<span class="mt-4 label-sm">Recent matches</span>
+				<div class="max-h-[360px] table-wrap">
+					<table>
+						<thead
+							><tr
+								><th>Started</th><th>Server</th><th>Map</th><th>Faction</th><th>Result</th><th
+									class="num">Time</th
+								><th class="num">K</th><th class="num">D</th></tr
+							></thead
+						>
+						<tbody>
+							{#each c.recent as m (m.matchId)}
+								<tr class={m.counted ? '' : 'text-mist-600'}>
+									<td class="whitespace-nowrap">{fmtTime(m.startedAt)}</td>
+									<td>{m.serverName}</td>
+									<td
+										>{m.map ? mapLabel(data.catalog, m.map) : '—'}
+										{#if m.experiences}<span class="text-[11.5px] text-mist-600"
+												>· {expSetLabel(data.catalog, m.experiences.split('+'))}</span
+											>{/if}</td
+									>
+									<td><FactionChip faction={m.faction} /></td>
+									<td>
+										{#if m.live}<Badge tone="info">live</Badge>
+										{:else if m.result}<Badge tone={RESULT_TONE[m.result]}>{m.result}</Badge>
+										{:else}<span class="text-mist-600">—</span>{/if}
+									</td>
+									<td class="num" title={m.counted ? '' : 'Too short to count as a match played'}
+										>{minutes(m.minutes)}</td
+									>
+									<td class="num">{m.kills}</td><td class="num">{m.deaths}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<p class="note">
+					Per-match record across the servers you can open in {data.server.orgName}, from RCON's
+					kill, death and cash counters. Ranks are on the all-time board with at least {c.ranks
+						.minMinutes} minutes in matches; a match needs 5 minutes' presence to count.
+				</p>
+			{:else}
+				<p class="text-[13px] text-mist-600">
+					No matches recorded for this player yet. Matches are tracked per player as the poller
+					samples; the career fills in from the next match they play.
+				</p>
+			{/if}
+		</div>
 
 		<div class="panel">
 			<span class="label-sm">By server</span>

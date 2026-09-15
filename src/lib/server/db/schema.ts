@@ -2,6 +2,7 @@
 // (bun run db:generate); the app applies them at startup. Keep it free of SvelteKit imports.
 import { sql } from 'drizzle-orm';
 import {
+	bigint,
 	bigserial,
 	boolean,
 	customType,
@@ -302,9 +303,18 @@ export const playerSessions = pgTable(
 		lastSeen: ts('last_seen').notNull(),
 		/** null while online */
 		leftAt: ts('left_at'),
+		/** accumulated over the session: the game's counters reset every match, these do not */
 		kills: integer('kills').notNull().default(0),
 		deaths: integer('deaths').notNull().default(0),
-		cash: integer('cash').notNull().default(0)
+		/** cash held at the last sample */
+		cash: integer('cash').notNull().default(0),
+		/**
+		 * The counters as the game last reported them, so the next sample can be turned into an
+		 * increment. Null on rows written before the panel tracked increments; for those `kills`
+		 * and `deaths` hold the last raw reading and serve as the baseline.
+		 */
+		rawKills: integer('raw_kills'),
+		rawDeaths: integer('raw_deaths')
 	},
 	(t) => [
 		index('player_sessions_open_idx').on(t.serverId, t.leftAt),
@@ -328,9 +338,41 @@ export const matches = pgTable(
 		peakPlayers: integer('peak_players').notNull().default(0),
 		/** [{ name, score }] */
 		finalScores: jsonb('final_scores'),
+		/** top faction; null while running, on a draw, and when nobody scored */
 		winner: text('winner')
 	},
 	(t) => [index('matches_server_idx').on(t.serverId, t.startedAt)]
+);
+
+/**
+ * One row per player per match: what they did while the match ran, built from counter increments
+ * (see match-track.ts) so a session spanning several matches, or a reconnect, still lands in the
+ * right match. Career pages and leaderboards read these.
+ */
+export const playerMatchStats = pgTable(
+	'player_match_stats',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		matchId: bigint('match_id', { mode: 'number' }).notNull(),
+		serverId: text('server_id').notNull(),
+		steamId: text('steam_id').notNull(),
+		/** last name and faction seen in this match */
+		name: text('name').notNull(),
+		faction: text('faction'),
+		firstSeen: ts('first_seen').notNull(),
+		lastSeen: ts('last_seen').notNull(),
+		kills: integer('kills').notNull().default(0),
+		deaths: integer('deaths').notNull().default(0),
+		/** cash held at the last sample of the match */
+		cash: integer('cash').notNull().default(0),
+		/** win / loss / draw once the match ended; null while running, or when nobody scored or the player had no faction */
+		result: text('result')
+	},
+	(t) => [
+		uniqueIndex('player_match_stats_match_steam_idx').on(t.matchId, t.steamId),
+		index('player_match_stats_steam_idx').on(t.steamId, t.lastSeen),
+		index('player_match_stats_server_idx').on(t.serverId, t.lastSeen)
+	]
 );
 
 // ---- Player intelligence: org-scoped notes and watchlist, cached Steam data, ban snapshots ------
@@ -462,6 +504,44 @@ export const webhooks = pgTable(
 	(t) => [index('webhooks_org_idx').on(t.orgId)]
 );
 
+/**
+ * A live status board: one Discord message per server, posted through one of the org's webhooks
+ * and edited in place by the poller (server stats in one embed, the current match's top players
+ * in another). The message id is what lets the poller edit rather than repost.
+ */
+export const statusBoards = pgTable(
+	'status_boards',
+	{
+		id: text('id').primaryKey(),
+		orgId: text('org_id')
+			.notNull()
+			.references(() => organizations.id, { onDelete: 'cascade' }),
+		serverId: text('server_id')
+			.notNull()
+			.references(() => servers.id, { onDelete: 'cascade' }),
+		webhookId: text('webhook_id')
+			.notNull()
+			.references(() => webhooks.id, { onDelete: 'cascade' }),
+		enabled: boolean('enabled').notNull().default(true),
+		/** how often the poller re-renders the message; never below the poll interval */
+		intervalSeconds: integer('interval_seconds').notNull().default(60),
+		/** rows in the current-match leaderboard embed */
+		topPlayers: integer('top_players').notNull().default(10),
+		/** the Discord message being edited; null until the first post, or after Discord lost it */
+		messageId: text('message_id'),
+		lastUpdatedAt: ts('last_updated_at'),
+		lastStatus: integer('last_status'),
+		lastError: text('last_error').notNull().default(''),
+		createdBy: text('created_by'),
+		createdAt: ts('created_at').notNull().defaultNow(),
+		updatedAt: ts('updated_at').notNull().defaultNow()
+	},
+	(t) => [
+		index('status_boards_server_idx').on(t.serverId),
+		index('status_boards_org_idx').on(t.orgId)
+	]
+);
+
 // ---- Organisation lists: bans and reserved slots kept in the panel and pushed to every server --
 
 /** A ban list or reserved-slot list an org owns. Servers subscribe through server_lists. */
@@ -589,6 +669,7 @@ export type SampleRow = typeof samples.$inferSelect;
 export type SteamProfileRow = typeof steamProfiles.$inferSelect;
 export type TriggerRow = typeof triggers.$inferSelect;
 export type WebhookRow = typeof webhooks.$inferSelect;
+export type StatusBoardRow = typeof statusBoards.$inferSelect;
 export type PlayerNoteRow = typeof playerNotes.$inferSelect;
 export type PlayerMarkRow = typeof playerMarks.$inferSelect;
 export type ListRow = typeof lists.$inferSelect;
