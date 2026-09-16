@@ -88,7 +88,6 @@ async function buildStatus(env: Env, t: PublicTarget): Promise<PublicStatusView>
 		server: { id: t.server.id, name: t.server.name },
 		org: { name: t.org.name, slug: t.org.slug, discordUrl: t.org.discordUrl },
 		features: { publicStats: t.features.publicStats, stats: t.features.stats },
-		join: t.features.publicStatus && !!live?.gameServerId,
 		generatedAt: new Date().toISOString(),
 		observedAt: live?.observedAt ?? null,
 		reachable: !!live?.ok,

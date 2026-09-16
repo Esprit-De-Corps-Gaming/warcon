@@ -149,12 +149,6 @@
 		<span class="label-sm mb-0">Current match</span>
 		<span class="text-[12px] text-mist-600">{scored.length} of {s.playerCount} scored</span>
 		<span class="ml-auto inline-flex gap-3">
-			{#if data.publicServer.join}
-				<a
-					href="/public/{encodeURIComponent(id)}/join"
-					class="text-[12px] text-accent hover:underline">Join the server →</a
-				>
-			{/if}
 			{#if s.features.publicStats}
 				<a
 					href="/public/{encodeURIComponent(id)}/stats"

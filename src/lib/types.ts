@@ -298,8 +298,6 @@ export interface PublicStatusView {
 	server: { id: string; name: string };
 	org: { name: string; slug: string; discordUrl: string };
 	features: { publicStats: boolean; stats: boolean };
-	/** a join page is available (the status page is on and the build serves a join code) */
-	join: boolean;
 	generatedAt: string;
 	/** the worker's last look, successful or not; null before the first */
 	observedAt: string | null;

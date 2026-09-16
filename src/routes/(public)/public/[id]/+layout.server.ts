@@ -3,7 +3,6 @@ import type { LayoutServerLoad } from './$types';
 import { getEnv } from '$lib/server/env';
 import { normalizeError } from '$lib/server/http';
 import { publicRate, publicTarget } from '$lib/server/public';
-import { readLiveRows } from '$lib/server/live';
 
 /**
  * Any public page of a server needs at least one of its public features on; otherwise the URL
@@ -20,15 +19,10 @@ export const load: LayoutServerLoad = async ({ params, request }) => {
 	}
 	const t = await publicTarget(env, params.id);
 	if (!t || (!t.features.publicStatus && !t.features.publicStats)) error(404, 'Not found.');
-	// The join page exists when the status page is on and the worker has read a join code.
-	const joinCode = t.features.publicStatus
-		? (await readLiveRows(env, [t.server.id])).get(t.server.id)?.gameServerId
-		: '';
 	return {
 		publicServer: {
 			id: t.server.id,
-			name: t.server.name,
-			join: !!joinCode
+			name: t.server.name
 		},
 		publicOrg: { name: t.org.name, slug: t.org.slug, discordUrl: t.org.discordUrl },
 		features: t.features
