@@ -17,6 +17,7 @@ import { orgListMembership } from './lists';
 import { playerMarks, playerNotes, playerSessions, serverBans, servers } from './db/schema';
 import { getProfiles, isSteamId, steamEnabled, type SteamProfileRow } from './steam';
 import { accountAgeDays, assessRisk, namesResemble, type Risk } from './risk';
+import { careerFor } from './career';
 import type { DossierView, PlayerMark, PlayerNoteView, SteamView } from '$lib/types';
 
 export { requireSteamId } from './steam';
@@ -256,7 +257,7 @@ export async function dossier(
 	const online = recent.find((s) => s.leftAt === null) ?? null;
 	const name = names[0]?.name || steamId;
 
-	const [profiles, local, [mark], noteRows, actions, org, listsRole, allOrgServers] =
+	const [profiles, local, [mark], noteRows, actions, org, listsRole, allOrgServers, career] =
 		await Promise.all([
 			getProfiles(env, [steamId], { refresh: !!opts.refreshSteam }),
 			localSignals(env, server.orgId, ids, null, [{ steamId, name }]),
@@ -281,7 +282,12 @@ export async function dossier(
 			),
 			getOrg(env, server.orgId),
 			listsRoleFor(env, user, server.orgId),
-			orgServers(env, server.orgId)
+			orgServers(env, server.orgId),
+			careerFor(
+				env,
+				visible.map((s) => ({ id: s.id, name: s.name })),
+				steamId
+			)
 		]);
 	const l = local.get(steamId);
 	const admin = access.caps.has('players.notes.manage');
@@ -329,6 +335,7 @@ export async function dossier(
 			deaths: num(r.deaths),
 			lastSeen: new Date(r.lastSeen).toISOString()
 		})),
+		career,
 		recent: recent.map((s) => ({
 			id: s.id,
 			serverId: s.serverId,

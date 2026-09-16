@@ -6,15 +6,22 @@
 // something changed or the heartbeat is due, an analytics sample. Nothing is sent to the game
 // from here; outbox.ts does that afterwards. Then the slower housekeeping runs, each part on its
 // own: match bookkeeping, ban-list snapshot, org-list sync, Steam warm-up.
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Env } from './env';
 import { publicMessage } from './http';
 import type { OrgRow, ServerRow } from './access';
 import { ACTIONS } from './actions';
 import { reservedSlotsHeld } from '../reserved-doc';
 import { GameError, WardogsClient } from './rcon';
-import { matches, samples, serverLive } from './db/schema';
+import { matches, playerMatchStats, samples, serverLive } from './db/schema';
 import type { DbOrTx } from './db';
+import {
+	closingScores,
+	matchBoundary,
+	matchOutcome,
+	type Boundary,
+	type Score
+} from './match-track';
 import { getProfiles, steamEnabled } from './steam';
 import {
 	enabledTriggers,
@@ -27,12 +34,16 @@ import {
 import { applyTriggerUpdates, enqueueIntents, wakeDelivery } from './outbox';
 import { liveObserved, reconcileServer, writeSnapshot, type Observed } from './lists-sync';
 import {
+	advancePresence,
 	closeAllSessions,
 	diffPresence,
 	firstVisits,
+	flushPending,
+	gapBaselines,
 	loadPresence,
 	newPresence,
 	persistPresence,
+	resolvePending,
 	type Presence,
 	type PresenceDiff
 } from './sessions';
@@ -78,8 +89,11 @@ export interface ServerMemory {
 	players: Player[];
 	playersAt: number;
 	presence: Presence;
+	/** the open match, once read (null: none open); the boundary test and the per-match rows use it */
+	match: OpenMatch | null;
+	matchLoaded: boolean;
 	lastMatchSeconds: number | null;
-	lastScores: unknown;
+	lastScores: Score[] | null;
 	reserved: Set<string>;
 	listsAt: number;
 	syncAt: number;
@@ -99,6 +113,13 @@ export interface ServerMemory {
 	healthUnserved: boolean;
 	/** observations completed */
 	count: number;
+}
+
+export interface OpenMatch {
+	id: number;
+	map: string | null;
+	startedAt: Date;
+	peakPlayers: number;
 }
 
 /** Build string, feature flags and join code, from GET /v1/capabilities and /v1/server-id. */
@@ -142,6 +163,8 @@ export function memoryFor(server: ServerRow, org: OrgRow): ServerMemory {
 			players: [],
 			playersAt: 0,
 			presence: newPresence(),
+			match: null,
+			matchLoaded: false,
 			lastMatchSeconds: null,
 			lastScores: null,
 			reserved: new Set(),
@@ -445,6 +468,21 @@ export async function observeServer(env: Env, m: ServerMemory, kinds: ObserveKin
 		await refreshIdentity(client, m, started);
 	if (status) await refreshUptime(client, m, started);
 	if (!m.presence.loaded) await loadPresence(env.db, server.id, m.presence);
+	if (!m.matchLoaded) await loadMatch(env.db, m);
+
+	// Does this sample begin a match? Then every player's counters have just reset, and the
+	// increments read from them belong to the new match, whose row the write below creates.
+	const boundary: Boundary | null = status
+		? matchBoundary({
+				matchSeconds: status.matchSeconds ?? null,
+				lastMatchSeconds: m.lastMatchSeconds,
+				current: m.match,
+				map: status.map,
+				ts
+			})
+		: null;
+	const fresh = boundary !== null;
+	const matchDue = !!status && (fresh || !m.match || status.playerCount > m.match.peakPlayers);
 
 	// Joins are trusted only when the previous look at the player list is recent enough that
 	// nobody could have come and gone between the two. The first look after a start, a tier
@@ -490,6 +528,16 @@ export async function observeServer(env: Env, m: ServerMemory, kinds: ObserveKin
 				joined.map((p) => p.steamId)
 			)
 		: new Set<string>();
+	// A joiner whose session an outage closed during this match keeps counting from where it was.
+	const baselines =
+		diff.joined.length && m.match && !fresh
+			? await gapBaselines(
+					env.db,
+					server.id,
+					diff.joined.map((p) => p.steamId),
+					m.match.startedAt
+				)
+			: new Map<string, { kills: number; deaths: number }>();
 	// Someone picking a faction already has a session row, so their first-visit answer is the one
 	// remembered from when they joined.
 	for (const { player: p } of diff.factioned)
@@ -514,26 +562,32 @@ export async function observeServer(env: Env, m: ServerMemory, kinds: ObserveKin
 					rows
 				)
 			: { intents: [], updates: [] };
-	// Memory follows every player observation; the database only when something is due.
-	for (const { player: p, session: s } of diff.stayed) {
-		s.name = p.name;
-		s.faction = p.faction;
-		if (p.faction) s.lastFaction = p.faction;
-		s.kills = p.kills;
-		s.deaths = p.deaths;
-		s.cash = p.cash;
-		s.lastSeen = started;
-	}
+	// Memory follows every player observation (kills and deaths as increments, banked per match);
+	// the database only when something is due.
+	const adv = { matchId: fresh ? null : (m.match?.id ?? null), fresh, baselines };
+	if (players) advancePresence(diff, started, adv);
 	const presenceDue =
 		diff.joined.length > 0 || diff.left.length > 0 || (heartbeatDue && diff.stayed.length > 0);
 	const needWrite =
-		presenceDue || ev.intents.length > 0 || ev.updates.length > 0 || liveDue || sampleDue;
+		presenceDue ||
+		matchDue ||
+		ev.intents.length > 0 ||
+		ev.updates.length > 0 ||
+		liveDue ||
+		sampleDue;
 	let intents = 0;
 	try {
 		if (needWrite)
 			await withOwnedTransaction(env, async (tx) => {
+				// The match first: a match that ends here takes the increments banked against it
+				// before it closes, and one that begins here gets its row before anything is
+				// banked against it.
+				if (status && matchDue) await reconcileMatch(tx, m, ts, status, boundary);
 				if (players && presenceDue)
-					await persistPresence(tx, server.id, m.presence, diff, ts, heartbeatDue, firstVisit);
+					await persistPresence(tx, server.id, m.presence, diff, ts, heartbeatDue, firstVisit, {
+						...adv,
+						matchId: m.match?.id ?? null
+					});
 				if (ev.intents.length) intents = await enqueueIntents(tx, server.id, ev.intents);
 				if (ev.updates.length) await applyTriggerUpdates(tx, ev.updates);
 				if (liveDue) await writeLive(tx, m, ts);
@@ -547,10 +601,17 @@ export async function observeServer(env: Env, m: ServerMemory, kinds: ObserveKin
 			m.sampleKey = sampleKey;
 			m.sampleWrittenAt = started;
 		}
+		// Only once every write above is in: a rollback must not advance what we remember.
+		if (status) {
+			m.lastMatchSeconds = status.matchSeconds ?? null;
+			m.lastScores = status.scores.map((f) => ({ name: f.name, score: f.score }));
+		}
 	} catch (err) {
-		// Nothing was committed, but the presence map may have moved: reload it next time so the
-		// joins are seen (and their triggers evaluated) again.
+		// Nothing was committed, but the presence map and the match may have moved: reload them
+		// next time so the joins are seen (and their triggers evaluated) again.
 		m.presence = newPresence();
+		m.match = null;
+		m.matchLoaded = false;
 		if (err instanceof LostOwnership) throw err;
 		console.warn(`[warcon] observation of ${server.name} not saved:`, publicMessage(err));
 	}
@@ -558,10 +619,6 @@ export async function observeServer(env: Env, m: ServerMemory, kinds: ObserveKin
 	if (intents) wakeDelivery();
 
 	// Housekeeping, each part on its own, and only while this process still owns the worker.
-	if (status)
-		await stage('match', m, () =>
-			withOwnedTransaction(env, (tx) => reconcileMatch(tx, m, ts, status!))
-		);
 	if (isOwner()) await stage('lists', m, () => keepLists(env, m, client, started, ts));
 	if (diff.joined.length && steamEnabled(env))
 		void getProfiles(
@@ -609,7 +666,10 @@ async function observationFailed(
 			if (m.failures >= OFFLINE_AFTER_FAILURES) {
 				// Close every open session once; a rollback below reloads the map so this retries.
 				if (!m.presence.loaded) await loadPresence(tx, m.server.id, m.presence);
-				if (m.presence.open.size) await closeAllSessions(tx, m.presence);
+				if (m.presence.open.size) await closeAllSessions(tx, m.server.id, m.presence);
+				// The open match stays open: on recovery the clock says whether it is still the
+				// same one (matchBoundary's stale case), and closed sessions carry their counters
+				// into the next ones (gapBaselines) so nobody counts twice.
 				m.lastMatchSeconds = null;
 			}
 			if (sampleDue)
@@ -700,49 +760,88 @@ async function keepLists(
 	}
 }
 
+/** The match the database still has open for this server (once per process per server). */
+async function loadMatch(db: DbOrTx, m: ServerMemory): Promise<void> {
+	const [row] = await db
+		.select({
+			id: matches.id,
+			map: matches.map,
+			startedAt: matches.startedAt,
+			peakPlayers: matches.peakPlayers
+		})
+		.from(matches)
+		.where(and(eq(matches.serverId, m.server.id), isNull(matches.endedAt)))
+		.orderBy(desc(matches.id))
+		.limit(1);
+	m.match = row ?? null;
+	m.matchLoaded = true;
+}
+
+/**
+ * Closes the open match when this sample began another (with the increments banked against it
+ * written first, and every player handed their result), opens the new one, or raises the peak.
+ * Runs inside the observation's transaction; memory follows the writes.
+ */
 async function reconcileMatch(
 	db: DbOrTx,
 	m: ServerMemory,
 	ts: Date,
-	status: Status
+	status: Status,
+	boundary: Boundary | null
 ): Promise<void> {
 	const serverId = m.server.id;
-	const scores = status.scores.map((f) => ({ name: f.name, score: f.score }));
-	const [current] = await db
-		.select({ id: matches.id, map: matches.map, peakPlayers: matches.peakPlayers })
-		.from(matches)
-		.where(and(eq(matches.serverId, serverId), isNull(matches.endedAt)))
-		.orderBy(desc(matches.id))
-		.limit(1);
-	const secs = status.matchSeconds ?? null;
-	// A new match: the map changed, or the clock went backwards (restart / rotation advance).
-	const restarted = secs !== null && m.lastMatchSeconds !== null && secs < m.lastMatchSeconds - 30;
-	const mapChanged = !!current && current.map !== status.map;
-	if (current && (restarted || mapChanged)) {
-		const last = (m.lastScores as { name: string; score: number }[] | null) ?? scores;
-		const winner = [...last].sort((a, b) => b.score - a.score)[0]?.name ?? null;
-		await db
-			.update(matches)
-			.set({ endedAt: ts, finalScores: last, winner })
-			.where(eq(matches.id, current.id));
+	if (m.match && boundary) {
+		await flushPending(db, serverId, m.presence.open.values(), ts, m.match.id);
+		await closeMatch(db, m.match.id, ts, closingScores(boundary, m.lastScores));
 	}
-	if (!current || restarted || mapChanged) {
+	if (!m.match || boundary) {
+		const secs = status.matchSeconds ?? null;
 		const startedAt = secs !== null ? new Date(ts.getTime() - secs * 1000) : ts;
-		await db.insert(matches).values({
-			serverId,
-			startedAt,
-			map: status.map,
-			experiences: status.experiences.join('+'),
-			lighting: status.lighting,
-			peakPlayers: status.playerCount
-		});
-	} else if (status.playerCount > current.peakPlayers) {
+		const [row] = await db
+			.insert(matches)
+			.values({
+				serverId,
+				startedAt,
+				map: status.map,
+				experiences: status.experiences.join('+'),
+				lighting: status.lighting,
+				peakPlayers: status.playerCount
+			})
+			.returning({ id: matches.id });
+		m.match = { id: row.id, map: status.map, startedAt, peakPlayers: status.playerCount };
+		resolvePending(m.presence, row.id);
+	} else if (status.playerCount > m.match.peakPlayers) {
 		await db
 			.update(matches)
 			.set({ peakPlayers: status.playerCount })
-			.where(eq(matches.id, current.id));
+			.where(eq(matches.id, m.match.id));
+		m.match.peakPlayers = status.playerCount;
 	}
-	// Only once every write above is in: a rollback must not advance what we remember.
-	m.lastMatchSeconds = secs;
-	m.lastScores = scores;
+}
+
+/**
+ * Ends a match with the last scores seen while it ran and hands every player in it their result:
+ * the top faction wins, a tie at the top is a draw, and a match nobody scored in (or that closes
+ * with no trustworthy scores) has no outcome.
+ */
+async function closeMatch(
+	db: DbOrTx,
+	matchId: number,
+	ts: Date,
+	last: Score[] | null
+): Promise<void> {
+	const outcome = matchOutcome(last);
+	await db
+		.update(matches)
+		.set({ endedAt: ts, finalScores: last, winner: outcome.winner })
+		.where(eq(matches.id, matchId));
+	if (!outcome.scored) return;
+	await db
+		.update(playerMatchStats)
+		.set({
+			result: outcome.draw
+				? sql`CASE WHEN ${playerMatchStats.faction} IS NULL OR ${playerMatchStats.faction} = '' THEN NULL ELSE 'draw' END`
+				: sql`CASE WHEN ${playerMatchStats.faction} IS NULL OR ${playerMatchStats.faction} = '' THEN NULL WHEN ${playerMatchStats.faction} = ${outcome.winner} THEN 'win' ELSE 'loss' END`
+		})
+		.where(eq(playerMatchStats.matchId, matchId));
 }

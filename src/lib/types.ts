@@ -2,8 +2,9 @@
 import type { StatusStyle } from './status-styles';
 import type { OrgRole } from '$lib/server/access';
 import type { BuiltinRole, Capability } from '$lib/capabilities';
+import type { MatchResult } from '$lib/server/match-track';
 
-export type { OrgRole, Capability, BuiltinRole };
+export type { OrgRole, Capability, BuiltinRole, MatchResult };
 
 /** A server role of one organisation: a name and what it may do. */
 export interface RoleView {
@@ -390,6 +391,8 @@ export interface DossierView {
 		lastSeen: string;
 	}[];
 	recent: DossierSession[];
+	/** per-match record across the same servers as perServer */
+	career: CareerView;
 	notes: PlayerNoteView[];
 	actions: {
 		id: number;
@@ -400,6 +403,116 @@ export interface DossierView {
 		outcome: string;
 		message: string;
 	}[];
+}
+
+// ---- careers and leaderboards (player_match_stats) ---------------------------------------------
+
+export type CareerRange = '7d' | '30d' | '90d' | 'all';
+export type LeaderboardSort =
+	'kills' | 'kd' | 'kph' | 'minutes' | 'matches' | 'wins' | 'winRate' | 'deaths' | 'cash';
+
+export interface LeaderboardRow {
+	/** 1-based, ties share a rank */
+	rank: number;
+	steamId: string;
+	name: string;
+	avatar: string | null;
+	/** matches the player was in for at least the minimum presence */
+	matches: number;
+	wins: number;
+	losses: number;
+	draws: number;
+	/** percent; null until enough decided matches */
+	winRate: number | null;
+	kills: number;
+	deaths: number;
+	/** kills per death, or kills when never died */
+	kd: number;
+	/** kills per hour in matches */
+	kph: number;
+	minutes: number;
+	/** cash held at the last sample */
+	cash: number;
+	bestKills: number;
+	lastSeen: string;
+}
+
+export interface LeaderboardView {
+	scope: 'server' | 'org';
+	range: CareerRange;
+	sort: LeaderboardSort;
+	/** playtime floor (minutes) a player must clear to be listed */
+	minMinutes: number;
+	servers: { id: string; name: string }[];
+	/** null for 'all' */
+	from: string | null;
+	minPresenceMinutes: number;
+	minDecided: number;
+	/** players with any match row in the range */
+	players: number;
+	/** players clearing the floor */
+	eligible: number;
+	rows: LeaderboardRow[];
+}
+
+export interface CareerMatch {
+	matchId: number;
+	serverId: string;
+	serverName: string;
+	map: string | null;
+	experiences: string | null;
+	startedAt: string | null;
+	endedAt: string | null;
+	live: boolean;
+	faction: string | null;
+	result: MatchResult | null;
+	kills: number;
+	deaths: number;
+	cash: number;
+	minutes: number;
+	/** present long enough for the match (and its result) to count */
+	counted: boolean;
+	winner: string | null;
+}
+
+export interface CareerBreakdown {
+	matches: number;
+	wins: number;
+	losses: number;
+	draws: number;
+	kills: number;
+	deaths: number;
+	minutes: number;
+}
+
+export interface CareerView {
+	/** first match row; null when none */
+	since: string | null;
+	matches: number;
+	wins: number;
+	losses: number;
+	draws: number;
+	winRate: number | null;
+	kills: number;
+	deaths: number;
+	kd: number;
+	kph: number;
+	minutes: number;
+	bestKills: number;
+	streak: { result: MatchResult; length: number } | null;
+	/** position on the all-time board of these servers; null when below the floor or unranked */
+	ranks: {
+		eligible: number;
+		minMinutes: number;
+		kills: number | null;
+		kd: number | null;
+		kph: number | null;
+		minutes: number | null;
+		winRate: number | null;
+	};
+	maps: ({ map: string } & CareerBreakdown)[];
+	factions: ({ faction: string } & CareerBreakdown)[];
+	recent: CareerMatch[];
 }
 
 // ---- automation ---------------------------------------------------------------------------------

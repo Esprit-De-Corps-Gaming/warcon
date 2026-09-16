@@ -30,6 +30,12 @@ on a container host, with the database wherever you like.
   per faction, uptime, time per map, busiest hours, player playtime and sessions, match history
   with results. Samples are written when something changes plus a heartbeat, and every figure is
   duration-weighted, so a faster cadence never distorts them.
+- **Careers and leaderboards**: every match is recorded per player (kills, deaths, cash, time in
+  it, faction, win / loss / draw), built from RCON's counters as increments so a session that spans
+  several matches or a reconnect still counts. Each server has a leaderboard over the organisation
+  or itself, ranked by kills, K/D, kills per hour, playtime, matches, wins, win rate or cash, with
+  a playtime floor and a time range; each dossier carries the player's career, their rank on the
+  board, per-map and per-faction records, streaks and recent matches.
 - **Player dossiers**: click any player for their history across the organisation's servers
   (sessions, playtime, names used, K/D), the admin actions taken on them, shared notes and a
   watchlist, and, with a Steam key, their Steam persona, account age and VAC / game-ban record.
@@ -306,6 +312,31 @@ account, a ban on another server in the organisation, a name that resembles a ba
 the watchlist. It is a pointer for an admin to look closer, not a verdict: the RCON API exposes no
 aim, position or input data, so nothing here detects cheating itself.
 
+### Careers and leaderboards
+
+The game reports each connected player's kills, deaths and cash as counters that start over with
+every match and every reconnect. The worker turns consecutive readings into increments and keeps
+two records from them: the session (accumulated for as long as the player stays connected, so a
+session spanning three matches shows all three) and a row per player per match, banked in memory
+and written with the session heartbeat. When a match ends (the clock goes backwards, the map
+changes, or, after an outage, the clock says the match the panel knew is long gone), the faction
+with the top score wins, a tie at the top is a draw, and every player in the match is handed a
+result from the faction they last played for. A match nobody scored in, or one that closes with
+no trustworthy scores (a fresh process, an outage), has no outcome. A session an outage closed
+during a match that is still running carries its counters into the player's next session, so
+nobody counts twice.
+
+**Leaderboards** (a tab on every server) rank the players of the organisation's servers you can
+open, or of this server alone, over 7, 30 or 90 days or all time: by kills, K/D, kills per hour,
+time in matches, matches, wins, win rate or cash held, above a playtime floor you choose. A match
+counts as played after five minutes in it, win rate needs three decided matches, and ties share a
+rank. The **Career** section of a dossier shows the same numbers for one player with their rank on
+the all-time board, a win or loss streak, per-map and per-faction records and their recent
+matches. Match rows follow the sessions' retention.
+
+What the game server exposes bounds all of this: kills, deaths and cash per player, nothing per
+weapon or vehicle, no kill feed and no in-game level, so those cannot appear here.
+
 ### Organisation ban and reserved lists
 
 Each organisation keeps a **ban list** and a **reserved-slot list** in the panel, under the
@@ -565,13 +596,15 @@ src/lib/server/risk.ts         advisory risk score and name resemblance (pure)
 src/lib/server/trigger-rules.ts / triggers.ts   trigger settings and verdicts (pure) / evaluation into intents, dry runs
 src/lib/server/webhooks.ts     Discord webhook records; webhook-delivery.ts batches audit rows to Discord
 src/lib/server/analytics.ts    analytics queries per server and range
+src/lib/server/match-track.ts  counter increments, match boundaries and win / loss / draw (pure)
+src/lib/server/career.ts       leaderboard and career queries over player_match_stats
 src/lib/server/audit.ts        audit writer/query with secret redaction
 src/lib/server/mockgame.ts     in-process imitation of the WDRCON API for demo/testing
 src/lib/config-doc.ts / config-fields.ts   ServerSettings.ini parser and line-level setter (pure, tested) / the keys the config form manages
 src/lib/components/            Modal, MapPicker, PopulationChart, CashChart, ConfigForm, Toasts, badges…
 src/routes/(auth)/             /sign-in (+ /verify), /setup, /join/[token], /recover (form actions)     src/routes/sign-out
 src/routes/api/passkeys/       WebAuthn ceremonies relayed to Better Auth; src/routes/auth/steam/ the Steam callback
-src/routes/(app)/              dashboard, /server/[id]/{,players,players/[steamId],bans,rotation,config,automation,analytics,log}, /audit, /orgs, /orgs/[id]/{,bans,reserved}, /users, /servers, /account
+src/routes/(app)/              dashboard, /server/[id]/{,players,players/[steamId],bans,rotation,config,automation,analytics,leaderboards,log}, /audit, /orgs, /orgs/[id]/{,bans,reserved}, /users, /servers, /account
 src/routes/api/                JSON API (below)
 docs/wardogs-api.md            the reverse-engineered game-server API
 ```
@@ -596,6 +629,7 @@ GET/POST /api/servers {orgId,...}  PATCH/DELETE /api/servers/:id  POST /api/serv
 GET/PUT /api/servers/:id/grants {grants:[{userId,roleId}]}   GET /api/servers/:id/summary
 GET|POST /api/servers/:id/rcon/:action   (GET for reads with query params, POST JSON for mutations)
 GET  /api/servers/:id/analytics?range=24h|7d|30d
+GET  /api/servers/:id/leaderboards?scope=server|org&range=7d|30d|90d|all&sort=kills|kd|kph|minutes|matches|wins|winRate|deaths|cash&min=<minutes>
 GET  /api/servers/:id/cash?since=<iso>                  cash-in-play samples since a moment (24 h at most), seeds the dashboard chart
 GET  /api/servers/:id/players/marks?ids=a,b&names=…     watchlist / first-visit / risk per connected player
 GET  /api/servers/:id/players/:steamId                  dossier   POST .../steam (refresh Steam data)

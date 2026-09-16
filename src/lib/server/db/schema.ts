@@ -2,6 +2,7 @@
 // (bun run db:generate); the app applies them at startup. Keep it free of SvelteKit imports.
 import { sql } from 'drizzle-orm';
 import {
+	bigint,
 	bigserial,
 	boolean,
 	customType,
@@ -418,9 +419,18 @@ export const playerSessions = pgTable(
 		lastSeen: ts('last_seen').notNull(),
 		/** null while online */
 		leftAt: ts('left_at'),
+		/** accumulated over the session: the game's counters reset every match, these do not */
 		kills: integer('kills').notNull().default(0),
 		deaths: integer('deaths').notNull().default(0),
-		cash: integer('cash').notNull().default(0)
+		/** cash held at the last observation */
+		cash: integer('cash').notNull().default(0),
+		/**
+		 * The counters as the game last reported them, so the next observation can be turned into
+		 * an increment. Null on rows written before the panel tracked increments; for those `kills`
+		 * and `deaths` hold the last raw reading and serve as the baseline.
+		 */
+		rawKills: integer('raw_kills'),
+		rawDeaths: integer('raw_deaths')
 	},
 	(t) => [
 		index('player_sessions_open_idx').on(t.serverId, t.leftAt),
@@ -444,9 +454,41 @@ export const matches = pgTable(
 		peakPlayers: integer('peak_players').notNull().default(0),
 		/** [{ name, score }] */
 		finalScores: jsonb('final_scores'),
+		/** top faction; null while running, on a draw, and when nobody scored */
 		winner: text('winner')
 	},
 	(t) => [index('matches_server_idx').on(t.serverId, t.startedAt)]
+);
+
+/**
+ * One row per player per match: what they did while the match ran, built from counter increments
+ * (see match-track.ts) so a session spanning several matches, or a reconnect, still lands in the
+ * right match. Careers and leaderboards read these.
+ */
+export const playerMatchStats = pgTable(
+	'player_match_stats',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		matchId: bigint('match_id', { mode: 'number' }).notNull(),
+		serverId: text('server_id').notNull(),
+		steamId: text('steam_id').notNull(),
+		/** last name and faction seen in this match */
+		name: text('name').notNull(),
+		faction: text('faction'),
+		firstSeen: ts('first_seen').notNull(),
+		lastSeen: ts('last_seen').notNull(),
+		kills: integer('kills').notNull().default(0),
+		deaths: integer('deaths').notNull().default(0),
+		/** cash held at the last observation of the match */
+		cash: integer('cash').notNull().default(0),
+		/** win / loss / draw once the match ended; null while running, or when nobody scored or the player had no faction */
+		result: text('result')
+	},
+	(t) => [
+		uniqueIndex('player_match_stats_match_steam_idx').on(t.matchId, t.steamId),
+		index('player_match_stats_steam_idx').on(t.steamId, t.lastSeen),
+		index('player_match_stats_server_idx').on(t.serverId, t.lastSeen)
+	]
 );
 
 // ---- Player intelligence: org-scoped notes and watchlist, cached Steam data, ban snapshots ------
