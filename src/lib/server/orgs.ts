@@ -17,6 +17,8 @@ import {
 import type { OrgInviteRow } from './db/schema';
 import type { Db } from './db';
 import { ensureOrgLists } from './lists';
+import { parseAllowances, type OrgAllowances } from './features';
+import { validateDiscordInvite } from './discord-invite';
 import { ensureOrgRoles, roleInOrg, rolesOf } from './roles';
 import { gateway } from './gateway';
 import type { InviteStatus, InviteView, ListSyncSummary, OrgMemberView, OrgView } from '$lib/types';
@@ -96,6 +98,12 @@ const shapeOrg = (
 	serverLimit: serverLimitFor(env, o),
 	customServerLimit: o.serverLimit,
 	suspended: o.suspendedAt ? { at: o.suspendedAt.toISOString(), reason: o.suspendedReason } : null,
+	allowed: {
+		allowStats: o.allowStats,
+		allowPublicStatus: o.allowPublicStatus,
+		allowPublicStats: o.allowPublicStats
+	},
+	discordUrl: o.discordUrl,
 	createdBy: creator ? { username: creator.username || '', name: creator.name } : null,
 	createdAt: iso(o.createdAt)
 });
@@ -167,6 +175,15 @@ export async function setOrgControls(
 			set.suspendedReason = '';
 			changes.suspended = false;
 		}
+	}
+	// Feature allowances: what the org's servers may switch on (see features.ts).
+	for (const [key, value] of Object.entries(parseAllowances(body)) as [
+		keyof OrgAllowances,
+		boolean
+	][]) {
+		if (org[key] === value) continue;
+		set[key] = value;
+		changes[key] = value;
 	}
 	if (!Object.keys(changes).length) throw new ApiError(400, 'Nothing to update.');
 	set.updatedAt = new Date();
@@ -268,6 +285,37 @@ export async function updateOrg(
  * cascade before the servers cascade. Each server gets its own 'server.delete' row so per-server
  * audit history shows who removed it.
  */
+/** Owners: the Discord invite shown as a button on the org's public pages and linked from status boards. */
+export async function setOrgDiscord(
+	env: Env,
+	req: Request,
+	actor: SessionUser,
+	org: OrgRow,
+	raw: unknown
+): Promise<string> {
+	let url: string;
+	try {
+		url = validateDiscordInvite(raw);
+	} catch (err) {
+		throw new ApiError(400, err instanceof Error ? err.message : 'Bad invite link.');
+	}
+	await env.db
+		.update(organizations)
+		.set({ discordUrl: url, updatedAt: new Date() })
+		.where(eq(organizations.id, org.id));
+	await writeAudit(env, req, {
+		actor,
+		orgId: org.id,
+		category: 'org',
+		action: 'org.update',
+		outcome: 'ok',
+		target: org.name,
+		message: url ? `Discord invite set to ${url}` : 'Discord invite removed',
+		detail: { orgId: org.id, discordUrl: url }
+	});
+	return url;
+}
+
 export async function deleteOrg(
 	env: Env,
 	req: Request,

@@ -60,6 +60,28 @@ export interface ServerInfo {
 	manager: boolean;
 	sortOrder: number;
 	demo: boolean;
+	/** the org owner's switches on this server */
+	switches: ServerSwitches;
+	/** the site owner's allowances on its organisation */
+	allowed: OrgAllowances;
+	/** what is actually on: both levels agree (see features.ts) */
+	features: ServerFeatures;
+}
+
+export interface OrgAllowances {
+	allowStats: boolean;
+	allowPublicStatus: boolean;
+	allowPublicStats: boolean;
+}
+export interface ServerSwitches {
+	statsEnabled: boolean;
+	publicStatus: boolean;
+	publicStats: boolean;
+}
+export interface ServerFeatures {
+	stats: boolean;
+	publicStatus: boolean;
+	publicStats: boolean;
 }
 
 export interface CatalogItem {
@@ -263,8 +285,46 @@ export interface OrgView {
 	/** the site owner's per-org override, if any */
 	customServerLimit: number | null;
 	suspended: { at: string; reason: string } | null;
+	/** the site owner's allowances; each server still has its own switches */
+	allowed: OrgAllowances;
+	/** https://discord.gg/… shown as a button on the org's public pages; '' = none */
+	discordUrl: string;
 	createdBy: { username: string; name: string } | null;
 	createdAt: string | null;
+}
+
+/** The public status page's data: the worker's live snapshot, never a live RCON call. */
+export interface PublicStatusView {
+	server: { id: string; name: string };
+	org: { name: string; slug: string; discordUrl: string };
+	features: { publicStats: boolean; stats: boolean };
+	/** a join page is available (the status page is on and the build serves a join code) */
+	join: boolean;
+	generatedAt: string;
+	/** the worker's last look, successful or not; null before the first */
+	observedAt: string | null;
+	/** the last look reached the server */
+	reachable: boolean;
+	error: string;
+	/** when the game process started, for the uptime; null until known */
+	startedAt: string | null;
+	map: string | null;
+	experiences: string[];
+	lighting: string | null;
+	/** match clock at the last look; the page keeps counting from there */
+	matchSeconds: number | null;
+	playerCount: number;
+	maxPlayers: number;
+	scores: { name: string; score: number }[];
+	cash: { name: string; cash: number }[];
+	/** the connected players ranked by kills (the current match's live scoreboard) */
+	players: {
+		steamId: string;
+		name: string;
+		faction: string | null;
+		kills: number;
+		deaths: number;
+	}[];
 }
 
 export interface OrgMemberView {

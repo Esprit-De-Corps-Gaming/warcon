@@ -39,6 +39,9 @@
 				password: string;
 				notes: string;
 				sortOrder: string;
+				statsEnabled: boolean;
+				publicStatus: boolean;
+				publicStats: boolean;
 		  }
 		| { kind: 'test'; server: ServerInfo; result: TestOk }
 		| {
@@ -87,9 +90,42 @@
 			scheme: s?.scheme ?? 'http',
 			password: '',
 			notes: s?.notes ?? '',
-			sortOrder: String(s?.sortOrder ?? 0)
+			sortOrder: String(s?.sortOrder ?? 0),
+			statsEnabled: s?.switches.statsEnabled ?? true,
+			publicStatus: s?.switches.publicStatus ?? false,
+			publicStats: s?.switches.publicStats ?? false
 		};
 	};
+
+	/** the site owner's allowances for the org the dialog's server belongs to */
+	let allowed = $derived.by(() => {
+		const d = dialog;
+		if (!d || d.kind !== 'edit') return null;
+		return d.server?.allowed ?? data.ownedOrgs.find((o) => o.id === d.orgId)?.allowed ?? null;
+	});
+	const FEATURES = [
+		{
+			key: 'statsEnabled',
+			allow: 'allowStats',
+			name: 'Match statistics',
+			blurb:
+				'Kills, deaths, cash and results per player per match: leaderboards, careers and the current-match table. One row per player per match.'
+		},
+		{
+			key: 'publicStatus',
+			allow: 'allowPublicStatus',
+			name: 'Public status page',
+			blurb:
+				'A page anyone can open without signing in: map, clock, players, scores, cash and the current match, from the worker’s last look.'
+		},
+		{
+			key: 'publicStats',
+			allow: 'allowPublicStats',
+			name: 'Public leaderboards and careers',
+			blurb:
+				'Public pages for the leaderboard and each player’s career. Needs match statistics; never shows notes, the watchlist, risk or bans.'
+		}
+	] as const;
 
 	async function run(fn: () => Promise<void>, done: string) {
 		busy = true;
@@ -114,7 +150,10 @@
 			port: Number(d.port),
 			scheme: d.scheme,
 			notes: d.notes,
-			sortOrder: Number(d.sortOrder) || 0
+			sortOrder: Number(d.sortOrder) || 0,
+			statsEnabled: d.statsEnabled,
+			publicStatus: d.publicStatus,
+			publicStats: d.publicStats
 		};
 		if (d.password) payload.password = d.password;
 		if (d.server) {
@@ -354,6 +393,27 @@
 						bind:value={d.sortOrder}
 					/></label
 				>
+			</div>
+			<div>
+				<span class="field-label">Features</span>
+				<div class="space-y-2">
+					{#each FEATURES as f (f.key)}
+						{@const permitted = allowed ? allowed[f.allow] : true}
+						{@const needsStats = f.key === 'publicStats' && !d.statsEnabled}
+						<label class="flex items-start gap-2 text-[13px] {permitted ? '' : 'opacity-60'}">
+							<input type="checkbox" class="mt-0.5" bind:checked={d[f.key]} disabled={!permitted} />
+							<span>
+								{f.name}
+								{#if !permitted}<span class="text-warn">
+										· not allowed for this organisation by the site owner</span
+									>{:else if d[f.key] && needsStats}<span class="text-warn">
+										· needs match statistics</span
+									>{/if}
+								<span class="block text-[12px] text-mist-400">{f.blurb}</span>
+							</span>
+						</label>
+					{/each}
+				</div>
 			</div>
 			<p class="note">
 				{#if data.user.role === 'owner'}

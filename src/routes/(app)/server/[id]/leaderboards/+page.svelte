@@ -69,6 +69,16 @@
 
 <svelte:head><title>Leaderboards · {data.server.name} · {data.appName}</title></svelte:head>
 
+{#if !data.server.features.stats}
+	<div class="callout mb-4 border-l-warn">
+		<b>Match statistics are off for this server</b>, so no new rows are recorded here.
+		{#if !data.server.allowed.allowStats}The site owner has not allowed them for {data.server
+				.orgName}.{:else if data.server.manager}Switch them on under Servers → Edit.{:else}An owner
+			of {data.server.orgName} can switch them on under Servers.{/if}
+		Rows from other servers, or from before, still show.
+	</div>
+{/if}
+
 <div class="mb-4 flex flex-wrap items-center gap-2">
 	<div class="join">
 		<button

@@ -462,6 +462,29 @@ org's server limit and **suspend** it: members lose access to its servers, owner
 servers or mint links, and invite links stop working, until it is restored. Deleting an org removes
 its servers from the panel; the accounts stay.
 
+### Feature switches and public pages
+
+Three features cost something (storage for per-match rows, pages anyone on the internet can hit),
+so each is switched at two levels and runs only when both agree. The **site owner** allows each one
+per organisation on the org's page; an **org owner** turns it on per server under Servers → Edit,
+where a switch the site owner has not allowed is greyed out and says so.
+
+| Feature                             | Default      | What it does                                                                                                                                             |
+| ----------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Match statistics**                | allowed, on  | The per-match rows behind leaderboards and careers. Off: no new rows for that server; old ones age out with the sessions.                                |
+| **Public status page**              | allowed, off | `/public/<serverId>`: map, mode, lighting, a ticking match clock, uptime, players, faction scores, cash in play and the current match's live scoreboard. |
+| **Public leaderboards and careers** | allowed, off | `/public/<serverId>/stats` and `/players/<steamId>`: the leaderboard and each player's career. Needs match statistics.                                   |
+
+Public pages need no account and show nothing an admin wrote: no notes, watchlist, risk, bans or
+admin actions, only match statistics and the Steam persona and avatar. The status page reads the
+worker's live snapshot (`server_live`), never a live RCON call, so a crowd of viewers costs the
+listener nothing; it is cached for five seconds per server and the JSON is rate limited per
+address. A closed page answers 404, not 403. The server's header in the panel links to its public
+pages when they are on. An org owner can also set the organisation's **Discord invite** on the org
+page, which becomes a "Join the Discord" button on the public pages, and a build that serves a join
+code (`GET /v1/server-id`) adds a `/public/<serverId>/join` page with the code and a Steam launch
+link.
+
 ### Bots and API keys
 
 A Discord bot or a script talks to the same `/api` routes as the panel, with an organisation
@@ -598,11 +621,14 @@ src/lib/server/webhooks.ts     Discord webhook records; webhook-delivery.ts batc
 src/lib/server/analytics.ts    analytics queries per server and range
 src/lib/server/match-track.ts  counter increments, match boundaries and win / loss / draw (pure)
 src/lib/server/career.ts       leaderboard and career queries over player_match_stats
+src/lib/server/features.ts     the two-level feature switches (site-owner allowances × server switches), pure
+src/lib/server/public.ts       public status / leaderboard / career views from the live snapshot, rate limit, cache
 src/lib/server/audit.ts        audit writer/query with secret redaction
 src/lib/server/mockgame.ts     in-process imitation of the WDRCON API for demo/testing
 src/lib/config-doc.ts / config-fields.ts   ServerSettings.ini parser and line-level setter (pure, tested) / the keys the config form manages
 src/lib/components/            Modal, MapPicker, PopulationChart, CashChart, ConfigForm, Toasts, badges…
 src/routes/(auth)/             /sign-in (+ /verify), /setup, /join/[token], /recover (form actions)     src/routes/sign-out
+src/routes/(public)/           /public/[id]/{,stats,players/[steamId],join}: no account, on only where switched on
 src/routes/api/passkeys/       WebAuthn ceremonies relayed to Better Auth; src/routes/auth/steam/ the Steam callback
 src/routes/(app)/              dashboard, /server/[id]/{,players,players/[steamId],bans,rotation,config,automation,analytics,leaderboards,log}, /audit, /orgs, /orgs/[id]/{,bans,reserved}, /users, /servers, /account
 src/routes/api/                JSON API (below)
@@ -630,6 +656,7 @@ GET/PUT /api/servers/:id/grants {grants:[{userId,roleId}]}   GET /api/servers/:i
 GET|POST /api/servers/:id/rcon/:action   (GET for reads with query params, POST JSON for mutations)
 GET  /api/servers/:id/analytics?range=24h|7d|30d
 GET  /api/servers/:id/leaderboards?scope=server|org&range=7d|30d|90d|all&sort=kills|kd|kph|minutes|matches|wins|winRate|deaths|cash&min=<minutes>
+GET  /api/public/servers/:id/status | /leaderboard?scope&range&sort&min | /players/:steamId     no account; 404 unless the server's public feature is on
 GET  /api/servers/:id/cash?since=<iso>                  cash-in-play samples since a moment (24 h at most), seeds the dashboard chart
 GET  /api/servers/:id/players/marks?ids=a,b&names=…     watchlist / first-visit / risk per connected player
 GET  /api/servers/:id/players/:steamId                  dossier   POST .../steam (refresh Steam data)

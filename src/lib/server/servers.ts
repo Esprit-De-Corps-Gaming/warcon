@@ -6,6 +6,7 @@ import type { Env } from './env';
 import { isDemoServer } from './env';
 import { ApiError, int, newId, publicMessage, str } from './http';
 import { encryptSecret } from './crypto';
+import { parseSwitches } from './features';
 import { writeAudit } from './audit';
 import { assertReachableTarget, normaliseHost } from './hostpolicy';
 import type { OrgRow, ServerRow, SessionUser } from './access';
@@ -142,6 +143,7 @@ export async function createServer(
 			passwordEnc: encryptSecret(env, password),
 			notes: t.notes || '',
 			sortOrder: t.sortOrder || 0,
+			...parseSwitches(body),
 			createdBy: actor.id
 		});
 		await ensureServerLists(tx, id, orgId);
@@ -181,7 +183,7 @@ export async function updateServer(
 			err
 		)
 	);
-	const set: Partial<typeof servers.$inferInsert> = { ...t };
+	const set: Partial<typeof servers.$inferInsert> = { ...t, ...parseSwitches(body) };
 	if (typeof body.password === 'string' && body.password)
 		set.passwordEnc = encryptSecret(env, body.password);
 	if (!Object.keys(set).length) throw new ApiError(400, 'Nothing to update.');

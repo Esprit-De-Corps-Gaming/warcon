@@ -6,6 +6,12 @@
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Env } from './env';
 import { isDemoServer } from './env';
+import {
+	effectiveFeatures,
+	type Features as ServerFeatures,
+	type OrgAllowances,
+	type ServerSwitches
+} from './features';
 import { ApiError } from './http';
 import { CAPABILITY_INFO, type Capability } from '../capabilities';
 import { accessFromCaps, resolveAccess, type ServerAccess } from './access-resolve';
@@ -166,6 +172,8 @@ export interface OrgSummary {
 	suspended: boolean;
 	/** may open the org's ban and reserved lists: owners, and anyone whose role on one of its servers includes lists.edit */
 	lists: boolean;
+	/** the site owner's feature allowances (what its servers may switch on) */
+	allowed: OrgAllowances;
 }
 
 /** Servers (with their orgs) where the user's granted role includes `cap`. */
@@ -190,7 +198,8 @@ export async function userOrgs(env: Env, user: SessionUser): Promise<OrgSummary[
 		slug: o.slug,
 		role,
 		suspended: !!o.suspendedAt,
-		lists
+		lists,
+		allowed: allowancesOf(o)
 	});
 	if (user.apiKey) {
 		const o = await getOrg(env, user.apiKey.orgId);
@@ -369,18 +378,37 @@ export type ServerSummary = {
 	manager: boolean;
 	sortOrder: number;
 	demo: boolean;
+	switches: ServerSwitches;
+	allowed: OrgAllowances;
+	features: ServerFeatures;
 };
+
+/** The org owner's switches on a server row. */
+export const switchesOf = (s: ServerSwitches): ServerSwitches => ({
+	statsEnabled: s.statsEnabled,
+	publicStatus: s.publicStatus,
+	publicStats: s.publicStats
+});
+/** The site owner's allowances on an org row. */
+export const allowancesOf = (o: OrgAllowances): OrgAllowances => ({
+	allowStats: o.allowStats,
+	allowPublicStatus: o.allowPublicStatus,
+	allowPublicStats: o.allowPublicStats
+});
+
+/** Just the org fields shapeServer needs (name for display, allowances for the effective features). */
+export type ServerOrg = { name: string } & OrgAllowances;
 
 export function shapeServer(
 	env: Env,
 	s: ServerRow,
-	orgName: string,
+	org: ServerOrg,
 	access: ServerAccess
 ): ServerSummary {
 	return {
 		id: s.id,
 		orgId: s.orgId,
-		orgName,
+		orgName: org.name,
 		name: s.name,
 		host: s.host,
 		port: s.port,
@@ -390,7 +418,10 @@ export function shapeServer(
 		caps: [...access.caps],
 		manager: access.manager,
 		sortOrder: s.sortOrder,
-		demo: isDemoServer(env, s)
+		demo: isDemoServer(env, s),
+		switches: switchesOf(s),
+		allowed: allowancesOf(org),
+		features: effectiveFeatures(org, s)
 	};
 }
 
@@ -410,32 +441,28 @@ export async function accessibleServers(
 		if (orgId && orgId !== key.orgId) return [];
 		if (!key.capabilities.includes('server.view')) return [];
 		const rows = await env.db
-			.select({ server: servers, orgName: organizations.name })
+			.select({ server: servers, org: organizations })
 			.from(servers)
 			.innerJoin(organizations, eq(organizations.id, servers.orgId))
 			.where(and(eq(servers.orgId, key.orgId), isNull(organizations.suspendedAt)))
 			.orderBy(...order);
 		return rows
 			.filter((r) => keyCoversServer(key, r.server))
-			.map((r) =>
-				shapeServer(env, r.server, r.orgName, accessFromCaps(key.capabilities, 'API key'))
-			);
+			.map((r) => shapeServer(env, r.server, r.org, accessFromCaps(key.capabilities, 'API key')));
 	}
 	if (user.role === 'owner') {
 		const rowsAll = await env.db
-			.select({ server: servers, orgName: organizations.name })
+			.select({ server: servers, org: organizations })
 			.from(servers)
 			.innerJoin(organizations, eq(organizations.id, servers.orgId))
 			.where(inOrg)
 			.orderBy(...order);
-		return rowsAll.map((r) =>
-			shapeServer(env, r.server, r.orgName, resolveAccess({ manager: true })!)
-		);
+		return rowsAll.map((r) => shapeServer(env, r.server, r.org, resolveAccess({ manager: true })!));
 	}
 	const rows = await env.db
 		.select({
 			server: servers,
-			orgName: organizations.name,
+			org: organizations,
 			roleId: serverGrants.roleId,
 			roleName: orgRoles.name,
 			capabilities: orgRoles.capabilities,
@@ -461,7 +488,7 @@ export async function accessibleServers(
 		shapeServer(
 			env,
 			r.server,
-			r.orgName,
+			r.org,
 			resolveAccess({
 				manager: r.orgRole === 'owner',
 				grant: r.roleId
