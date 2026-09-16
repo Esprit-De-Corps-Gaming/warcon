@@ -20,7 +20,7 @@ import { getProfiles, steamEnabled } from './steam';
 import { runTriggers } from './triggers';
 import { counterDelta, matchBoundary, matchOutcome, type Score } from './match-track';
 import { markBoardsOffline, refreshBoards } from './status-board';
-import { effectiveFeatures } from './features';
+import { effectiveFeatures, publicLinks } from './features';
 import {
 	expireEntries,
 	liveObserved,
@@ -211,7 +211,13 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 		});
 		if (synced?.observed) m.reserved = new Set(synced.observed.reserved);
 		// Discord status boards whose interval has elapsed; never throws.
-		await refreshBoards(env, server, { status, players, ts, stats: features.stats });
+		await refreshBoards(env, server, {
+			status,
+			players,
+			ts,
+			stats: features.stats,
+			links: publicLinks(env.ORIGIN, org, server)
+		});
 		// Warm the Steam cache for newcomers so the players table and dossier have their data.
 		if (joined.length && steamEnabled(env))
 			await getProfiles(

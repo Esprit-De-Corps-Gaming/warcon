@@ -10,7 +10,7 @@ export const load: LayoutServerLoad = async ({ params }) => {
 	if (!t || (!t.features.publicStatus && !t.features.publicStats)) error(404, 'Not found.');
 	return {
 		publicServer: { id: t.server.id, name: t.server.name },
-		publicOrg: { name: t.org.name, slug: t.org.slug },
+		publicOrg: { name: t.org.name, slug: t.org.slug, discordUrl: t.org.discordUrl },
 		features: t.features
 	};
 };

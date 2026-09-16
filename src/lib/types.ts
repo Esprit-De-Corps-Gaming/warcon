@@ -179,6 +179,8 @@ export interface OrgView {
 	suspended: { at: string; reason: string } | null;
 	/** the site owner's allowances; each server still has its own switches */
 	allowed: OrgAllowances;
+	/** https://discord.gg/… shown as a button on the org's public pages; '' = none */
+	discordUrl: string;
 	createdBy: { username: string; name: string } | null;
 	createdAt: string | null;
 }

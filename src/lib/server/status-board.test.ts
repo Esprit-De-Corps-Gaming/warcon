@@ -133,6 +133,19 @@ describe('buildBoardEmbeds', () => {
 		expect(server.fields![1].value).toBe('🔴 A 5\n🔵 B 5');
 		expect(server.color).toBe(0x8a8a90);
 	});
+	test('links: the title opens the status page and a line points at the leaderboard', () => {
+		const [server] = buildBoardEmbeds({
+			...base,
+			links: { status: 'https://h/public/x', stats: 'https://h/public/x/stats' }
+		});
+		expect(server.url).toBe('https://h/public/x');
+		expect(server.description).toContain(
+			'🔗 [Status page](https://h/public/x) · [Leaderboard](https://h/public/x/stats)'
+		);
+		const [plain] = buildBoardEmbeds(base);
+		expect(plain.url).toBeUndefined();
+		expect(plain.description).not.toContain('🔗');
+	});
 	test('unreachable: one red embed with the problem', () => {
 		const embeds = buildBoardEmbeds({ ...base, status: null, problem: 'Connection refused.' });
 		expect(embeds).toHaveLength(1);

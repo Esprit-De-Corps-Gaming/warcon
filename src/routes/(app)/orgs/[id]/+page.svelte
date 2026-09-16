@@ -217,6 +217,19 @@
 	const eventLabel = (key: string) =>
 		data.webhookEvents.find((e) => e.key === key)?.label.split(' (')[0] ?? key;
 
+	// --- Discord invite (public pages button) ---
+	let discordInput = $state('');
+	$effect(() => {
+		discordInput = data.org.discordUrl;
+	});
+	function saveDiscord() {
+		void run(
+			() => api('PATCH', orgPath, { discordUrl: discordInput.trim() }),
+			discordInput.trim() ? 'Discord invite saved.' : 'Discord invite removed.',
+			false
+		);
+	}
+
 	// --- Discord status boards ---
 	const INTERVALS = [30, 60, 120, 300, 900].filter((s) => s >= data.boardMinInterval);
 	const intervalLabel = (s: number) => (s >= 60 ? `${s / 60} min` : `${s} s`);
@@ -545,6 +558,30 @@
 				</div>
 			</div>
 		{/if}
+
+		<div class="panel">
+			<span class="label-sm">Discord invite</span>
+			<form
+				class="join w-full"
+				onsubmit={(e) => {
+					e.preventDefault();
+					saveDiscord();
+				}}
+			>
+				<input
+					class="input font-mono text-[12.5px]"
+					type="text"
+					bind:value={discordInput}
+					placeholder="https://discord.gg/…"
+					maxlength="200"
+				/>
+				<button type="submit" class="btn btn-sm h-auto" disabled={busy}>Save</button>
+			</form>
+			<p class="note">
+				Shown as a "Join the Discord" button on this organisation's public pages and linked from its
+				status boards. Use a link that never expires. Leave blank for no button.
+			</p>
+		</div>
 
 		<div class="panel">
 			<div class="mb-3 flex items-center gap-3">

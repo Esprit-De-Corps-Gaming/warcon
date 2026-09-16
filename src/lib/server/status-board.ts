@@ -23,7 +23,7 @@ import {
 } from './db/schema';
 import { encryptSecret } from './crypto';
 import { validateWebhookUrl } from './webhooks';
-import { effectiveFeatures } from './features';
+import { effectiveFeatures, publicLinks, type PublicLinks } from './features';
 import { deleteDiscord, editDiscord, postDiscord, type PostResult } from './webhook-delivery';
 import { buildBoardEmbeds, type BoardInput } from './status-board-embeds';
 import type { Player, StatusBoardView, Status } from '$lib/types';
@@ -239,7 +239,14 @@ export async function refreshBoardNow(
 		env,
 		server,
 		[row],
-		{ status, players, problem, ts: new Date(), stats: effectiveFeatures(org, server).stats },
+		{
+			status,
+			players,
+			problem,
+			ts: new Date(),
+			stats: effectiveFeatures(org, server).stats,
+			links: publicLinks(env.ORIGIN, org, server)
+		},
 		true
 	);
 	await writeAudit(env, req, {
@@ -266,6 +273,8 @@ export interface PollContext {
 	ts: Date;
 	/** match statistics are on for this server; when off, the board shows live counters instead */
 	stats?: boolean;
+	/** where the card links out (public pages that are on, the org's Discord) */
+	links?: PublicLinks;
 }
 
 /** Boards of this server whose interval has elapsed (or that never posted). */
@@ -403,7 +412,8 @@ async function renderBoards(
 			day: data.day,
 			topPlayers: board.topPlayers,
 			intervalSeconds: board.intervalSeconds,
-			now: ctx.ts
+			now: ctx.ts,
+			links: ctx.links
 		});
 		results.push(
 			await locked(board.id, async () => {

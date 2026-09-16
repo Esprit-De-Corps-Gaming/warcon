@@ -136,6 +136,8 @@ export const organizations = pgTable('organizations', {
 	allowStats: boolean('allow_stats').notNull().default(true),
 	allowPublicStatus: boolean('allow_public_status').notNull().default(true),
 	allowPublicStats: boolean('allow_public_stats').notNull().default(true),
+	/** the org's Discord invite (https://discord.gg/…), a button on its public pages; '' = none */
+	discordUrl: text('discord_url').notNull().default(''),
 	createdAt: ts('created_at').notNull().defaultNow(),
 	updatedAt: ts('updated_at').notNull().defaultNow()
 });

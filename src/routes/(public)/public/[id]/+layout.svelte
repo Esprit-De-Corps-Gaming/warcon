@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import DiscordMark from '$lib/components/DiscordMark.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -23,6 +24,14 @@
 			<h1 class="truncate text-xl font-semibold tracking-tight">{data.publicServer.name}</h1>
 			<div class="mt-1 text-[12.5px] text-mist-400">{data.publicOrg.name}</div>
 		</div>
+		{#if data.publicOrg.discordUrl}
+			<a
+				href={data.publicOrg.discordUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="btn btn-primary"><DiscordMark /> Join the Discord</a
+			>
+		{/if}
 	</div>
 </div>
 

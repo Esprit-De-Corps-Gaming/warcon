@@ -87,6 +87,8 @@ async function orgOfServer(env: Env, serverId: string): Promise<string | null> {
 
 export interface Embed {
 	title: string;
+	/** makes the title a link */
+	url?: string;
 	description: string;
 	color: number;
 	timestamp: string;

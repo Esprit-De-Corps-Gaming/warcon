@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { effectiveFeatures, featureBlocker, parseAllowances, parseSwitches } from './features';
+import {
+	effectiveFeatures,
+	featureBlocker,
+	parseAllowances,
+	parseSwitches,
+	publicLinks
+} from './features';
 
 const allowAll = { allowStats: true, allowPublicStatus: true, allowPublicStats: true };
 const allOn = { statsEnabled: true, publicStatus: true, publicStats: true };
@@ -52,6 +58,33 @@ describe('featureBlocker', () => {
 		expect(featureBlocker('publicStats', allowAll, { ...allOn, statsEnabled: false })).toBe(
 			'needs match statistics, which are off'
 		);
+	});
+});
+
+describe('publicLinks', () => {
+	test('only the pages that are on, plus the Discord invite', () => {
+		expect(
+			publicLinks(
+				'https://rcon.example.com/',
+				{ ...allowAll, discordUrl: 'https://discord.gg/abc' },
+				{ ...allOn, id: 's 1' }
+			)
+		).toEqual({
+			status: 'https://rcon.example.com/public/s%201',
+			stats: 'https://rcon.example.com/public/s%201/stats',
+			discord: 'https://discord.gg/abc'
+		});
+		expect(
+			publicLinks('http://localhost:5173', allowAll, { ...allOn, publicStats: false, id: 'x' })
+		).toEqual({ status: 'http://localhost:5173/public/x' });
+		expect(
+			publicLinks('http://h', allowAll, {
+				...allOn,
+				publicStatus: false,
+				publicStats: false,
+				id: 'x'
+			})
+		).toEqual({});
 	});
 });
 

@@ -76,6 +76,26 @@ export function featureBlocker(
 	return null;
 }
 
+/** Absolute links to a server's public pages, only for the pages that are on; the org's Discord too. */
+export interface PublicLinks {
+	status?: string;
+	stats?: string;
+	discord?: string;
+}
+export function publicLinks(
+	origin: string,
+	org: OrgAllowances & { discordUrl?: string },
+	server: ServerSwitches & { id: string }
+): PublicLinks {
+	const f = effectiveFeatures(org, server);
+	const base = `${origin.replace(/\/+$/, '')}/public/${encodeURIComponent(server.id)}`;
+	const out: PublicLinks = {};
+	if (f.publicStatus) out.status = base;
+	if (f.publicStats) out.stats = `${base}/stats`;
+	if (org.discordUrl) out.discord = org.discordUrl;
+	return out;
+}
+
 export const parseSwitches = (body: Record<string, unknown>): Partial<ServerSwitches> => {
 	const out: Partial<ServerSwitches> = {};
 	if (body.statsEnabled !== undefined) out.statsEnabled = !!body.statsEnabled;

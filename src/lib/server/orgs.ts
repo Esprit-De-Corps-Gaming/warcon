@@ -18,6 +18,7 @@ import type { Db } from './db';
 import { ensureOrgLists } from './lists';
 import { fanOut } from './lists-sync';
 import { parseAllowances, type OrgAllowances } from './features';
+import { validateDiscordInvite } from './discord-invite';
 import type { InviteStatus, InviteView, ListSyncSummary, OrgMemberView, OrgView } from '$lib/types';
 
 /** A Drizzle transaction handle (what `db.transaction(async (tx) => ...)` passes). */
@@ -100,6 +101,7 @@ const shapeOrg = (
 		allowPublicStatus: o.allowPublicStatus,
 		allowPublicStats: o.allowPublicStats
 	},
+	discordUrl: o.discordUrl,
 	createdBy: creator ? { username: creator.username || '', name: creator.name } : null,
 	createdAt: iso(o.createdAt)
 });
@@ -272,6 +274,37 @@ export async function updateOrg(
 		target: name,
 		detail: { orgId: org.id, from: org.name }
 	});
+}
+
+/** Owners: the Discord invite shown as a button on the org's public pages and linked from status boards. */
+export async function setOrgDiscord(
+	env: Env,
+	req: Request,
+	actor: SessionUser,
+	org: OrgRow,
+	raw: unknown
+): Promise<string> {
+	let url: string;
+	try {
+		url = validateDiscordInvite(raw);
+	} catch (err) {
+		throw new ApiError(400, err instanceof Error ? err.message : 'Bad invite link.');
+	}
+	await env.db
+		.update(organizations)
+		.set({ discordUrl: url, updatedAt: new Date() })
+		.where(eq(organizations.id, org.id));
+	await writeAudit(env, req, {
+		actor,
+		orgId: org.id,
+		category: 'org',
+		action: 'org.update',
+		outcome: 'ok',
+		target: org.name,
+		message: url ? `Discord invite set to ${url}` : 'Discord invite removed',
+		detail: { orgId: org.id, discordUrl: url }
+	});
+	return url;
 }
 
 /**

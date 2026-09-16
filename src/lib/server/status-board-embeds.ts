@@ -30,6 +30,12 @@ export interface BoardInput {
 	topPlayers: number;
 	intervalSeconds: number;
 	now: Date;
+	/**
+	 * Where the card links out: the public status page (the title becomes the link), the public
+	 * leaderboard and the org's Discord. A channel webhook cannot carry real buttons (Discord
+	 * reserves components for application-owned webhooks), so these are links in the text.
+	 */
+	links?: { status?: string; stats?: string; discord?: string };
 }
 
 const EMPTY_CATALOG = { maps: [], lightings: [], experiences: [] };
@@ -113,6 +119,11 @@ export function buildBoardEmbeds(input: BoardInput): Embed[] {
 		`**Lighting** ${lightingLabel(EMPTY_CATALOG, status.lighting)}`,
 		`**Match clock** ${clock(status.matchSeconds)}${status.scoreCap ? ` · first to ${fmtInt(status.scoreCap)}` : ''}`
 	];
+	const links = [
+		input.links?.status ? `[Status page](${input.links.status})` : '',
+		input.links?.stats ? `[Leaderboard](${input.links.stats})` : ''
+	].filter(Boolean);
+	if (links.length) lines.push(`🔗 ${links.join(' · ')}`);
 	const cashByFaction = new Map<string, number>();
 	for (const p of input.players) {
 		const key = p.faction || '';
@@ -156,6 +167,7 @@ export function buildBoardEmbeds(input: BoardInput): Embed[] {
 		});
 	const server: Embed = {
 		title: clip(input.serverName, 200),
+		...(input.links?.status ? { url: input.links.status } : {}),
 		description: lines.join('\n'),
 		color: leader && !tied ? hexToInt(leader.colorHex, ACCENT) : NEUTRAL,
 		timestamp,

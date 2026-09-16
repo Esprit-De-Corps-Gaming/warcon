@@ -375,6 +375,12 @@ cached for five seconds per server and the JSON behind the pages is rate limited
 closed page answers 404, not 403. The server's header in the panel links to its public pages
 when they are on.
 
+Everything cross-links: an org owner can save the organisation's **Discord invite** on the org
+page, which becomes a "Join the Discord" button in the header of its public pages; a Discord
+status board's title opens the server's public status page and its text links to the public
+leaderboard, for the pages that are on. (Discord reserves real buttons for application-owned
+webhooks, so a channel webhook's card carries links, not buttons.)
+
 ### Invite links
 
 An org owner mints a link on the org page: it carries the org role joiners get (`member` or
@@ -491,7 +497,7 @@ which call Better Auth server-side behind the login lockout and the audit trail.
 own `/api/auth/*` routes only the OAuth callback is reachable over HTTP; everything else answers 404.
 
 ```
-GET/POST /api/orgs  PATCH/DELETE /api/orgs/:id   PATCH {name} | {membersReserved} | site owner: {serverLimit, suspended, reason}
+GET/POST /api/orgs  PATCH/DELETE /api/orgs/:id   PATCH {name} | {membersReserved} | {discordUrl} | site owner: {serverLimit, suspended, reason}
 GET  /api/orgs/:id/members  PATCH/DELETE /api/orgs/:id/members/:userId {role}  PUT .../:userId/grants {grants:[{serverId,role}]}
 GET/POST /api/orgs/:id/invites {label,orgRole,serverRole,expiresDays,maxUses}  DELETE /api/orgs/:id/invites/:inviteId
 GET/POST /api/users  PATCH/DELETE /api/users/:id  PUT /api/users/:id/grants {grants:[{serverId,role}]}

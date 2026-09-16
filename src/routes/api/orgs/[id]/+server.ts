@@ -1,7 +1,13 @@
 import { getEnv } from '$lib/server/env';
 import { apiJson, param, readJson, route } from '$lib/server/http';
 import { requireOrgRole, requireOwner } from '$lib/server/access';
-import { deleteOrg, setMembersReserved, setOrgControls, updateOrg } from '$lib/server/orgs';
+import {
+	deleteOrg,
+	setMembersReserved,
+	setOrgControls,
+	setOrgDiscord,
+	updateOrg
+} from '$lib/server/orgs';
 
 /**
  * {name} or {membersReserved} for org owners; {serverLimit, suspended, reason, allowStats,
@@ -23,6 +29,9 @@ export const PATCH = route(async (event) => {
 	} else if (body.membersReserved !== undefined) {
 		const sync = await setMembersReserved(env, event.request, user, org, !!body.membersReserved);
 		return apiJson({ ok: true, sync });
+	} else if (body.discordUrl !== undefined) {
+		const discordUrl = await setOrgDiscord(env, event.request, user, org, body.discordUrl);
+		return apiJson({ ok: true, discordUrl });
 	} else {
 		await updateOrg(env, event.request, user, org, body);
 	}
