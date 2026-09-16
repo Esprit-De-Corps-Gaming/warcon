@@ -80,18 +80,21 @@ export function featureBlocker(
 export interface PublicLinks {
 	status?: string;
 	stats?: string;
+	/** the join page, when the status page is on and a game address is set */
+	join?: string;
 	discord?: string;
 }
 export function publicLinks(
 	origin: string,
 	org: OrgAllowances & { discordUrl?: string },
-	server: ServerSwitches & { id: string }
+	server: ServerSwitches & { id: string; joinAddress?: string }
 ): PublicLinks {
 	const f = effectiveFeatures(org, server);
 	const base = `${origin.replace(/\/+$/, '')}/public/${encodeURIComponent(server.id)}`;
 	const out: PublicLinks = {};
 	if (f.publicStatus) out.status = base;
 	if (f.publicStats) out.stats = `${base}/stats`;
+	if (f.publicStatus && server.joinAddress) out.join = `${base}/join`;
 	if (org.discordUrl) out.discord = org.discordUrl;
 	return out;
 }

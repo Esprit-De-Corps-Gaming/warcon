@@ -99,6 +99,13 @@
       "when": 1789572139951,
       "tag": "0013_org_discord",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789573879050,
+      "tag": "0014_server_join_address",
+      "breakpoints": true
     }
   ]
 }

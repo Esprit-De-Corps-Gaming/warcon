@@ -208,6 +208,8 @@ export const servers = pgTable('servers', {
 	statsEnabled: boolean('stats_enabled').notNull().default(true),
 	publicStatus: boolean('public_status').notNull().default(false),
 	publicStats: boolean('public_stats').notNull().default(false),
+	/** host:port players connect to (not the RCON listener), for the public join page; '' = none */
+	joinAddress: text('join_address').notNull().default(''),
 	createdBy: text('created_by'),
 	createdAt: ts('created_at').notNull().defaultNow(),
 	updatedAt: ts('updated_at').notNull().defaultNow()

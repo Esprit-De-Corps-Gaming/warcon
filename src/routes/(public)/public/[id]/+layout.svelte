@@ -24,14 +24,16 @@
 			<h1 class="truncate text-xl font-semibold tracking-tight">{data.publicServer.name}</h1>
 			<div class="mt-1 text-[12.5px] text-mist-400">{data.publicOrg.name}</div>
 		</div>
-		{#if data.publicOrg.discordUrl}
-			<a
-				href={data.publicOrg.discordUrl}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="btn btn-primary"><DiscordMark /> Join the Discord</a
-			>
-		{/if}
+		<span class="inline-flex flex-wrap gap-2">
+			{#if data.publicServer.join}
+				<a href="{base}/join" class="btn btn-primary">Join the server</a>
+			{/if}
+			{#if data.publicOrg.discordUrl}
+				<a href={data.publicOrg.discordUrl} target="_blank" rel="noopener noreferrer" class="btn"
+					><DiscordMark /> Discord</a
+				>
+			{/if}
+		</span>
 	</div>
 </div>
 

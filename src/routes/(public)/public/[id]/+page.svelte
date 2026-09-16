@@ -158,12 +158,20 @@
 			>{s.players.length} in this match · {scored.length} scored{#if !s.features.stats}
 				· running totals since each player joined{/if}</span
 		>
-		{#if s.features.publicStats}
-			<a
-				href="/public/{encodeURIComponent(id)}/stats"
-				class="ml-auto text-[12px] text-accent hover:underline">All-time leaderboard →</a
-			>
-		{/if}
+		<span class="ml-auto inline-flex gap-3">
+			{#if data.publicServer.join}
+				<a
+					href="/public/{encodeURIComponent(id)}/join"
+					class="text-[12px] text-accent hover:underline">Join the server →</a
+				>
+			{/if}
+			{#if s.features.publicStats}
+				<a
+					href="/public/{encodeURIComponent(id)}/stats"
+					class="text-[12px] text-accent hover:underline">All-time leaderboard →</a
+				>
+			{/if}
+		</span>
 	</div>
 	<div class="max-h-[60vh] table-wrap">
 		<table>

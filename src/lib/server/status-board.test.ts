@@ -142,6 +142,9 @@ describe('buildBoardEmbeds', () => {
 		expect(server.description).toContain(
 			'🔗 [Status page](https://h/public/x) · [Leaderboard](https://h/public/x/stats)'
 		);
+		expect(
+			buildBoardEmbeds({ ...base, links: { join: 'https://h/public/x/join' } })[0].description
+		).toContain('🔗 [Join](https://h/public/x/join)');
 		const [plain] = buildBoardEmbeds(base);
 		expect(plain.url).toBeUndefined();
 		expect(plain.description).not.toContain('🔗');

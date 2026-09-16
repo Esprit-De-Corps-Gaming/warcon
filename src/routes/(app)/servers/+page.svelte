@@ -36,6 +36,7 @@
 				statsEnabled: boolean;
 				publicStatus: boolean;
 				publicStats: boolean;
+				joinAddress: string;
 		  }
 		| { kind: 'test'; server: ServerInfo; result: TestOk }
 		| {
@@ -63,7 +64,8 @@
 			sortOrder: String(s?.sortOrder ?? 0),
 			statsEnabled: s?.switches.statsEnabled ?? true,
 			publicStatus: s?.switches.publicStatus ?? false,
-			publicStats: s?.switches.publicStats ?? false
+			publicStats: s?.switches.publicStats ?? false,
+			joinAddress: s?.joinAddress ?? ''
 		};
 	};
 	/** the site owner's allowances for the org the dialog's server belongs to */
@@ -122,7 +124,8 @@
 			sortOrder: Number(d.sortOrder) || 0,
 			statsEnabled: d.statsEnabled,
 			publicStatus: d.publicStatus,
-			publicStats: d.publicStats
+			publicStats: d.publicStats,
+			joinAddress: d.joinAddress.trim()
 		};
 		if (d.password) payload.password = d.password;
 		if (d.server) {
@@ -347,6 +350,19 @@
 					/></label
 				>
 			</div>
+			<label class="block"
+				><span class="field-label">Game address (players connect here)</span><input
+					class="input font-mono text-[12.5px]"
+					type="text"
+					bind:value={d.joinAddress}
+					placeholder="203.0.113.7:9025 — optional"
+					maxlength="260"
+				/>
+				<span class="mt-1 block text-[12px] text-mist-400"
+					>Not the RCON listener. With the public status page on, this adds a join page with Steam
+					links and the address to copy.</span
+				></label
+			>
 			<div>
 				<span class="field-label">Features</span>
 				<div class="space-y-2">

@@ -35,7 +35,7 @@ export interface BoardInput {
 	 * leaderboard and the org's Discord. A channel webhook cannot carry real buttons (Discord
 	 * reserves components for application-owned webhooks), so these are links in the text.
 	 */
-	links?: { status?: string; stats?: string; discord?: string };
+	links?: { status?: string; stats?: string; join?: string; discord?: string };
 }
 
 const EMPTY_CATALOG = { maps: [], lightings: [], experiences: [] };
@@ -120,6 +120,7 @@ export function buildBoardEmbeds(input: BoardInput): Embed[] {
 		`**Match clock** ${clock(status.matchSeconds)}${status.scoreCap ? ` · first to ${fmtInt(status.scoreCap)}` : ''}`
 	];
 	const links = [
+		input.links?.join ? `[Join](${input.links.join})` : '',
 		input.links?.status ? `[Status page](${input.links.status})` : '',
 		input.links?.stats ? `[Leaderboard](${input.links.stats})` : ''
 	].filter(Boolean);

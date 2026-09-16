@@ -19,6 +19,17 @@ import { serverGrants, servers, user } from './db/schema';
 import { assertCanAddServer, ensureMemberships } from './orgs';
 import { ensureServerLists } from './lists';
 import { parseSwitches } from './features';
+import { validateJoinAddress } from './join';
+
+/** The players' connect address, when the body carries one; a bad one is a 400. */
+function parseJoinAddress(body: Record<string, unknown>): { joinAddress?: string } {
+	if (body.joinAddress === undefined) return {};
+	try {
+		return { joinAddress: validateJoinAddress(body.joinAddress) };
+	} catch (err) {
+		throw new ApiError(400, err instanceof Error ? err.message : 'Bad game address.');
+	}
+}
 
 export interface TargetFields {
 	name?: string;
@@ -147,6 +158,7 @@ export async function createServer(
 			notes: t.notes || '',
 			sortOrder: t.sortOrder || 0,
 			...parseSwitches(body),
+			...parseJoinAddress(body),
 			createdBy: actor.id
 		});
 		await ensureServerLists(tx, id, orgId);
@@ -183,7 +195,7 @@ export async function updateServer(
 			err
 		)
 	);
-	const switches = parseSwitches(body);
+	const switches = { ...parseSwitches(body), ...parseJoinAddress(body) };
 	const set: Partial<typeof servers.$inferInsert> = { ...t, ...switches };
 	if (typeof body.password === 'string' && body.password)
 		set.passwordEnc = encryptSecret(env, body.password);

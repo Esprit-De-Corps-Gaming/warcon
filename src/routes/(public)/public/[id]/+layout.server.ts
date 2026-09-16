@@ -9,7 +9,12 @@ export const load: LayoutServerLoad = async ({ params }) => {
 	const t = await publicTarget(env, params.id);
 	if (!t || (!t.features.publicStatus && !t.features.publicStats)) error(404, 'Not found.');
 	return {
-		publicServer: { id: t.server.id, name: t.server.name },
+		publicServer: {
+			id: t.server.id,
+			name: t.server.name,
+			/** the join page exists when the status page is on and an address is set */
+			join: t.features.publicStatus && !!t.server.joinAddress
+		},
 		publicOrg: { name: t.org.name, slug: t.org.slug, discordUrl: t.org.discordUrl },
 		features: t.features
 	};
