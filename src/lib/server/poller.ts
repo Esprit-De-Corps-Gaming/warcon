@@ -18,7 +18,14 @@ import {
 } from './db/schema';
 import { getProfiles, steamEnabled } from './steam';
 import { runTriggers } from './triggers';
-import { counterDelta, matchBoundary, matchOutcome, type Score } from './match-track';
+import {
+	baselineAfterGap,
+	closingScores,
+	counterDelta,
+	matchBoundary,
+	matchOutcome,
+	type Score
+} from './match-track';
 import { markBoardsOffline, refreshBoards } from './status-board';
 import { effectiveFeatures, publicLinks } from './features';
 import {
@@ -42,8 +49,13 @@ const LEADER_LOCK_KEY = 7741221;
 /** How often each server's ban list and reserved slots are re-read for the trigger engine. */
 const LISTS_TTL_MS = 5 * 60_000;
 
+/** What a public card says when the panel cannot reach a server; the real error names the RCON address. */
+const OFFLINE_PROBLEM = 'The panel could not reach the game server.';
+
 interface Memory {
 	inFlight: boolean;
+	/** a Discord board render is running for this server; the next one waits for the tick after */
+	boardsInFlight: boolean;
 	failures: number;
 	lastMatchSeconds: number | null;
 	/** Scores from the previous sample: the last known state of a match that just ended. */
@@ -61,6 +73,7 @@ const mem = (id: string): Memory => {
 	if (!m) {
 		m = {
 			inFlight: false,
+			boardsInFlight: false,
 			failures: 0,
 			lastMatchSeconds: null,
 			lastScores: null,
@@ -72,6 +85,17 @@ const mem = (id: string): Memory => {
 	}
 	return m;
 };
+
+/** Runs one board delivery per server at a time, detached from the tick that asked for it. */
+function deliverBoards(m: Memory, run: () => Promise<void>): void {
+	if (m.boardsInFlight) return;
+	m.boardsInFlight = true;
+	void run()
+		.catch((err) => console.error('[warcon] status boards', err))
+		.finally(() => {
+			m.boardsInFlight = false;
+		});
+}
 
 declare global {
 	// Survives Vite HMR re-evaluation in dev so we never run two loops.
@@ -158,7 +182,9 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 					.set({ leftAt: sql`${playerSessions.lastSeen}` })
 					.where(and(eq(playerSessions.serverId, server.id), isNull(playerSessions.leftAt)));
 				m.lastMatchSeconds = null;
-				await markBoardsOffline(env, server, problem, ts);
+				// Off the sampling path, and never the raw error: it names the RCON host and port,
+				// and the card is public.
+				deliverBoards(m, () => markBoardsOffline(env, server, OFFLINE_PROBLEM, ts));
 			}
 			return;
 		}
@@ -186,14 +212,12 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 		// it, and their increments belong to the new match. Per-match player rows are written only
 		// where match statistics are switched on (both the org's allowance and the server's switch).
 		const features = effectiveFeatures(org, server);
-		const matchId = await reconcileMatch(env, server.id, ts, status, m, scores);
-		const { joined, firstVisit } = await reconcileSessions(
-			env,
-			server.id,
-			ts,
-			players,
-			features.stats ? matchId : null
-		);
+		const match = await reconcileMatch(env, server.id, ts, status, m, scores);
+		const { joined, firstVisit } = await reconcileSessions(env, server.id, ts, players, {
+			match: match.id !== null ? { id: match.id, startedAt: match.startedAt! } : null,
+			fresh: match.fresh,
+			stats: features.stats
+		});
 		const observed = await refreshLists(env, server, client, m, ts).catch((err) => {
 			console.warn('[warcon] ban list snapshot', publicMessage(err));
 			return null;
@@ -210,14 +234,18 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 			return null;
 		});
 		if (synced?.observed) m.reserved = new Set(synced.observed.reserved);
-		// Discord status boards whose interval has elapsed; never throws.
-		await refreshBoards(env, server, {
-			status,
-			players,
-			ts,
-			stats: features.stats,
-			links: publicLinks(env.ORIGIN, org, server)
-		});
+		// Discord status boards whose interval has elapsed. Delivery can wait on Discord for
+		// seconds per board, so it runs off the sampling path: the next tick must not be skipped
+		// because a webhook is slow.
+		deliverBoards(m, () =>
+			refreshBoards(env, server, {
+				status,
+				players,
+				ts,
+				stats: features.stats,
+				links: publicLinks(env.ORIGIN, org, server)
+			})
+		);
 		// Warm the Steam cache for newcomers so the players table and dossier have their data.
 		if (joined.length && steamEnabled(env))
 			await getProfiles(
@@ -271,7 +299,14 @@ async function reconcileSessions(
 	serverId: string,
 	ts: Date,
 	players: Player[],
-	matchId: number | null
+	opts: {
+		/** the match this sample belongs to */
+		match: { id: number; startedAt: Date } | null;
+		/** this sample began the match: every counter has reset, so the reading is the increment */
+		fresh: boolean;
+		/** write per-match rows (match statistics are on for this server) */
+		stats: boolean;
+	}
 ): Promise<{ joined: Player[]; firstVisit: Set<string> }> {
 	const open = await env.db
 		.select({
@@ -285,6 +320,33 @@ async function reconcileSessions(
 		.from(playerSessions)
 		.where(and(eq(playerSessions.serverId, serverId), isNull(playerSessions.leftAt)));
 	const byId = new Map(open.map((s) => [s.steamId, s]));
+	// Players with no open session may have had one that an outage closed while this match kept
+	// running; their last raw reading is then the baseline, or their counters would count twice.
+	const newcomers = players.map((p) => p.steamId).filter((id) => id && !byId.has(id));
+	const lastClosed = new Map<
+		string,
+		{ leftAt: Date; rawKills: number | null; rawDeaths: number | null }
+	>();
+	if (newcomers.length && opts.match && !opts.fresh) {
+		const rows = await env.db.execute<{
+			steamId: string;
+			leftAt: Date;
+			rawKills: number | null;
+			rawDeaths: number | null;
+		}>(sql`
+			SELECT DISTINCT ON (steam_id) steam_id AS "steamId", left_at AS "leftAt",
+			       COALESCE(raw_kills, kills) AS "rawKills", COALESCE(raw_deaths, deaths) AS "rawDeaths"
+			  FROM player_sessions
+			 WHERE server_id = ${serverId} AND steam_id IN ${newcomers} AND left_at IS NOT NULL
+			   AND left_at >= ${opts.match.startedAt}
+			 ORDER BY steam_id, left_at DESC`);
+		for (const r of rows)
+			lastClosed.set(r.steamId, {
+				leftAt: new Date(r.leftAt),
+				rawKills: r.rawKills,
+				rawDeaths: r.rawDeaths
+			});
+	}
 	const seen = new Set<string>();
 	const joined: Player[] = [];
 	const firstVisit = new Set<string>();
@@ -295,9 +357,21 @@ async function reconcileSessions(
 			if (!p.steamId || seen.has(p.steamId)) continue;
 			seen.add(p.steamId);
 			const row = byId.get(p.steamId);
+			const gap = lastClosed.get(p.steamId);
 			// Rows from before increments were tracked hold the last raw reading in kills/deaths.
-			const dk = counterDelta(p.kills, row ? (row.rawKills ?? row.kills) : null);
-			const dd = counterDelta(p.deaths, row ? (row.rawDeaths ?? row.deaths) : null);
+			// On the sample that began the match the counters have just reset for everyone.
+			const baseK = opts.fresh
+				? null
+				: row
+					? (row.rawKills ?? row.kills)
+					: baselineAfterGap(gap?.leftAt, gap?.rawKills, opts.match?.startedAt);
+			const baseD = opts.fresh
+				? null
+				: row
+					? (row.rawDeaths ?? row.deaths)
+					: baselineAfterGap(gap?.leftAt, gap?.rawDeaths, opts.match?.startedAt);
+			const dk = counterDelta(p.kills, baseK);
+			const dd = counterDelta(p.deaths, baseD);
 			if (row) {
 				await tx
 					.update(playerSessions)
@@ -328,9 +402,9 @@ async function reconcileSessions(
 					rawDeaths: p.deaths
 				});
 			}
-			if (matchId !== null)
+			if (opts.stats && opts.match)
 				inMatch.push({
-					matchId,
+					matchId: opts.match.id,
 					serverId,
 					steamId: p.steamId,
 					name: p.name,
@@ -384,7 +458,10 @@ async function reconcileSessions(
 	return { joined, firstVisit };
 }
 
-/** Opens and closes matches; returns the id of the match this sample belongs to. */
+/**
+ * Opens and closes matches; returns the match this sample belongs to and whether this sample
+ * began it (then every player's counters have just reset).
+ */
 async function reconcileMatch(
 	env: Env,
 	serverId: string,
@@ -392,7 +469,7 @@ async function reconcileMatch(
 	status: Status,
 	m: Memory,
 	scores: Score[]
-): Promise<number | null> {
+): Promise<{ id: number | null; startedAt: Date | null; fresh: boolean }> {
 	const [current] = await env.db
 		.select({
 			id: matches.id,
@@ -413,10 +490,11 @@ async function reconcileMatch(
 		ts
 	});
 	m.lastMatchSeconds = secs;
-	if (current && boundary) await closeMatch(env, current.id, ts, m, scores, boundary);
+	if (current && boundary) await closeMatch(env, current.id, ts, m, boundary);
 	let id = current?.id ?? null;
+	let startedAt = current?.startedAt ?? null;
 	if (!current || boundary) {
-		const startedAt = secs !== null ? new Date(ts.getTime() - secs * 1000) : ts;
+		startedAt = secs !== null ? new Date(ts.getTime() - secs * 1000) : ts;
 		const [row] = await env.db
 			.insert(matches)
 			.values({
@@ -436,23 +514,22 @@ async function reconcileMatch(
 			.where(eq(matches.id, current.id));
 	}
 	m.lastScores = scores;
-	return id;
+	return { id, startedAt, fresh: boundary !== null };
 }
 
 /**
  * Ends a match with the last scores seen while it ran and hands every player in it their result.
- * After an outage (`stale`) the previous scores belong to some other match, or to nothing: the
- * match closes with no outcome rather than a wrong one.
+ * After an outage (`stale`) the previous scores belong to some other match, and on a fresh
+ * process there are none: the match closes with no outcome rather than a wrong one.
  */
 async function closeMatch(
 	env: Env,
 	matchId: number,
 	ts: Date,
 	m: Memory,
-	scores: Score[],
 	boundary: 'restarted' | 'map' | 'stale'
 ): Promise<void> {
-	const last = boundary === 'stale' ? null : ((m.lastScores as Score[] | null) ?? scores);
+	const last = closingScores(boundary, m.lastScores as Score[] | null);
 	const outcome = matchOutcome(last);
 	await env.db.transaction(async (tx) => {
 		await tx

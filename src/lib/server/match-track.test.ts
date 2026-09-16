@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { counterDelta, matchBoundary, matchOutcome, resultFor } from './match-track';
+import {
+	baselineAfterGap,
+	closingScores,
+	counterDelta,
+	matchBoundary,
+	matchOutcome,
+	resultFor
+} from './match-track';
 
 describe('counterDelta', () => {
 	test('growth since the last reading', () => {
@@ -76,6 +83,32 @@ describe('resultFor', () => {
 		expect(resultFor(null, won)).toBeNull();
 		expect(resultFor('', won)).toBeNull();
 		expect(resultFor('RED', matchOutcome([]))).toBeNull();
+	});
+});
+
+describe('closingScores', () => {
+	const scores = [{ name: 'RED', score: 5 }];
+	test('the previous sample closes a restart or map change', () => {
+		expect(closingScores('restarted', scores)).toBe(scores);
+		expect(closingScores('map', scores)).toBe(scores);
+	});
+	test('nothing after an outage, and nothing on a fresh process', () => {
+		expect(closingScores('stale', scores)).toBeNull();
+		expect(closingScores('map', null)).toBeNull();
+		expect(closingScores('restarted', [])).toBeNull();
+	});
+});
+
+describe('baselineAfterGap', () => {
+	const start = new Date('2026-09-14T12:00:00Z');
+	test('a session the outage closed during this match carries its counters forward', () => {
+		expect(baselineAfterGap(new Date('2026-09-14T12:10:00Z'), 20, start)).toBe(20);
+	});
+	test('a session from before the match, or no session, carries nothing', () => {
+		expect(baselineAfterGap(new Date('2026-09-14T11:50:00Z'), 20, start)).toBeNull();
+		expect(baselineAfterGap(null, 20, start)).toBeNull();
+		expect(baselineAfterGap(new Date('2026-09-14T12:10:00Z'), null, start)).toBeNull();
+		expect(baselineAfterGap(new Date('2026-09-14T12:10:00Z'), 20, null)).toBeNull();
 	});
 });
 

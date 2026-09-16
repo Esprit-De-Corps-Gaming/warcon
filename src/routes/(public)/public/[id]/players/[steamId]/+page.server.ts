@@ -13,7 +13,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	if (!/^\d{17}$/.test(params.steamId)) error(404, 'Not found.');
 	const [{ name, career, servers }, profiles] = await Promise.all([
 		publicCareer(env, t, params.steamId),
-		getProfiles(env, [params.steamId]).catch(() => new Map())
+		getProfiles(env, [params.steamId], { cacheOnly: true }).catch(() => new Map())
 	]);
 	const steam = steamView(profiles.get(params.steamId));
 	return {

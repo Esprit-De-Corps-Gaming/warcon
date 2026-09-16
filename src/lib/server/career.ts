@@ -264,7 +264,7 @@ export async function careerFor(
 		  FROM player_match_stats s LEFT JOIN matches m ON m.id = s.match_id
 		 WHERE s.steam_id = ${steamId} AND s.server_id IN ${ids}
 		 GROUP BY key ORDER BY minutes DESC`;
-	const [[totals], [ranks], maps, factions, recent] = await Promise.all([
+	const [[totals], [ranks], [eligibleRow], maps, factions, recent] = await Promise.all([
 		env.db.execute<AggRow & { firstSeen: Date | null }>(sql`
 			WITH ${boardCte(ids, from, poll, 0)}
 			SELECT r.steam_id AS "steamId", r.name, NULL AS avatar, r.matches, r.wins, r.losses, r.draws,
@@ -290,6 +290,10 @@ export async function careerFor(
 				            ELSE RANK() OVER (ORDER BY r.win_rate DESC NULLS LAST) END AS "winRate"
 				  FROM ranked r) x
 			 WHERE x.steam_id = ${steamId}`),
+		// how many players clear the floor, whether or not this one does
+		env.db.execute<{ n: string }>(sql`
+			WITH ${boardCte(ids, from, poll, DEFAULT_MIN_MINUTES)}
+			SELECT COUNT(*) AS n FROM ranked`),
 		env.db.execute<Breakdown>(breakdown(sql`COALESCE(m.map, '')`)),
 		env.db.execute<Breakdown>(breakdown(sql`COALESCE(s.faction, '')`)),
 		env.db.execute<{
@@ -317,7 +321,7 @@ export async function careerFor(
 			 WHERE s.steam_id = ${steamId} AND s.server_id IN ${ids}
 			 ORDER BY s.last_seen DESC LIMIT 40`)
 	]);
-	const eligibleCount = num(ranks?.eligible);
+	const eligibleCount = num(eligibleRow?.n);
 	const recentRows: CareerMatch[] = recent.map((r) => ({
 		matchId: num(r.matchId),
 		serverId: r.serverId,

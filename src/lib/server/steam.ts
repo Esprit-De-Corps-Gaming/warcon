@@ -142,7 +142,7 @@ export async function fetchSteam(env: Env, ids: string[]): Promise<SteamProfileR
 export async function getProfiles(
 	env: Env,
 	ids: string[],
-	opts: { refresh?: boolean; maxAgeMs?: number } = {}
+	opts: { refresh?: boolean; maxAgeMs?: number; cacheOnly?: boolean } = {}
 ): Promise<Map<string, SteamProfileRow>> {
 	const unique = [...new Set(ids.filter(isSteamId))];
 	const map = new Map<string, SteamProfileRow>();
@@ -152,6 +152,8 @@ export async function getProfiles(
 		.from(steamProfiles)
 		.where(inArray(steamProfiles.steamId, unique));
 	for (const row of cached) map.set(row.steamId, row);
+	// Public pages never spend the site's Steam quota: what the panel already fetched, or nothing.
+	if (opts.cacheOnly) return map;
 	if (!steamEnabled(env)) {
 		if (opts.refresh)
 			throw new ApiError(

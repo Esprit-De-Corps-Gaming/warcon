@@ -130,7 +130,12 @@ async function buildStatus(env: Env, t: PublicTarget): Promise<PublicStatusView>
 		generatedAt: now.toISOString(),
 		sampledAt: lastOk?.ts ? lastOk.ts.toISOString() : null,
 		reachable: !!latest?.ok,
-		error: latest?.ok ? '' : latest?.error || (latest ? 'Unreachable.' : 'Not sampled yet.'),
+		// Never the stored error: it names the RCON host and port, and this view is public.
+		error: latest?.ok
+			? ''
+			: latest
+				? 'The panel could not reach the game server.'
+				: 'Not sampled yet.',
 		map: lastOk?.map ?? null,
 		experiences: lastOk?.experiences ? lastOk.experiences.split('+').filter(Boolean) : [],
 		lighting: lastOk?.lighting ?? null,

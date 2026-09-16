@@ -45,6 +45,30 @@ export function resultFor(faction: string | null | undefined, o: Outcome): Match
 	return faction === o.winner ? 'win' : 'loss';
 }
 
+/**
+ * The scores a match closes with: the previous sample's. After an outage (`stale`) they belong
+ * to some other match, and on a fresh process there are none yet; a match closed on this sample's
+ * scores would hand every player a result from the *next* match, so those close with no outcome.
+ */
+export function closingScores(boundary: Boundary, lastScores: Score[] | null): Score[] | null {
+	return boundary === 'stale' || !lastScores?.length ? null : lastScores;
+}
+
+/**
+ * The counter baseline for a player who has no open session but did have one that an outage
+ * closed during the match still running: their counters may have kept going, so the last raw
+ * reading is the baseline (a genuine reconnect reads lower and counterDelta counts it from zero).
+ * Outside the running match there is nothing to carry over.
+ */
+export function baselineAfterGap(
+	lastLeftAt: Date | null | undefined,
+	lastRaw: number | null | undefined,
+	matchStartedAt: Date | null | undefined
+): number | null {
+	if (!lastLeftAt || !matchStartedAt || lastRaw === null || lastRaw === undefined) return null;
+	return lastLeftAt.getTime() >= matchStartedAt.getTime() ? lastRaw : null;
+}
+
 /** The match clock may jitter by a poll interval; anything further back is a restart. */
 const RESTART_SLACK_S = 30;
 /** After an outage the clock alone has to say whether the match we knew is still running. */
