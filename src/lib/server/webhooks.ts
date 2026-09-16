@@ -18,7 +18,7 @@ import {
 	type WebhookEvent
 } from './webhook-delivery';
 import type { WebhookView } from '$lib/types';
-import { isStatusStyle, type StatusStyle } from '$lib/status-styles';
+import { clampStatusInterval, isStatusStyle, type StatusStyle } from '$lib/status-styles';
 import { gateway } from './gateway';
 import { servers } from './db/schema';
 import { statusMessage } from './webhook-status-core';
@@ -72,6 +72,9 @@ function parseStyle(raw: unknown): StatusStyle {
 	return raw;
 }
 
+/** An absent flag keeps the given fallback (the column default on create, the stored value on update). */
+const boolOr = (raw: unknown, fallback: boolean): boolean => (raw === undefined ? fallback : !!raw);
+
 /** Takes the status messages out of the channel (best effort; Discord may already have lost them). */
 async function removeStatusMessages(
 	env: Env,
@@ -98,6 +101,10 @@ const shape = (w: WebhookRow): WebhookView => ({
 	enabled: w.enabled,
 	statusEnabled: w.statusEnabled,
 	statusStyle: w.statusStyle,
+	statusInterval: w.statusIntervalS,
+	linkStatus: w.statusLinkStatus,
+	linkStats: w.statusLinkStats,
+	linkPanel: w.statusLinkPanel,
 	statusSentAt: w.statusSentAt ? w.statusSentAt.toISOString() : null,
 	lastSentAt: w.lastSentAt ? w.lastSentAt.toISOString() : null,
 	lastStatus: w.lastStatus,
@@ -134,6 +141,7 @@ export async function createWebhook(
 	const { url, hint } = validateWebhookUrl(body.url);
 	const statusEnabled = !!body.statusEnabled;
 	const statusStyle = body.statusStyle === undefined ? 'banner' : parseStyle(body.statusStyle);
+	const statusIntervalS = clampStatusInterval(body.statusInterval);
 	const events = parseEvents(body.events, statusEnabled);
 	const serverIds = await parseServers(env, org.id, body.serverIds);
 	const label = str(body.label, 60) || 'Discord';
@@ -150,6 +158,10 @@ export async function createWebhook(
 			enabled: body.enabled === undefined ? true : !!body.enabled,
 			statusEnabled,
 			statusStyle,
+			statusIntervalS,
+			statusLinkStatus: boolOr(body.linkStatus, true),
+			statusLinkStats: boolOr(body.linkStats, true),
+			statusLinkPanel: boolOr(body.linkPanel, false),
 			createdBy: user.id
 		})
 		.returning();
@@ -205,6 +217,11 @@ export async function updateWebhook(
 	}
 	if (body.statusStyle !== undefined)
 		changes.statusStyle = set.statusStyle = parseStyle(body.statusStyle);
+	if (body.statusInterval !== undefined)
+		changes.statusInterval = set.statusIntervalS = clampStatusInterval(body.statusInterval);
+	if (body.linkStatus !== undefined) changes.linkStatus = set.statusLinkStatus = !!body.linkStatus;
+	if (body.linkStats !== undefined) changes.linkStats = set.statusLinkStats = !!body.linkStats;
+	if (body.linkPanel !== undefined) changes.linkPanel = set.statusLinkPanel = !!body.linkPanel;
 	const statusEnabled = set.statusEnabled ?? row.statusEnabled;
 	if (body.events !== undefined)
 		changes.events = set.events = parseEvents(body.events, statusEnabled);
@@ -330,7 +347,12 @@ export async function sendTestCard(
 	if (only && only.length && !only.includes(serverId))
 		throw new ApiError(400, 'This webhook does not cover that server.');
 	const [server] = await env.db
-		.select({ id: servers.id, name: servers.name })
+		.select({
+			id: servers.id,
+			name: servers.name,
+			publicStatus: servers.publicStatus,
+			publicStats: servers.publicStats
+		})
 		.from(servers)
 		.where(and(eq(servers.id, serverId), eq(servers.orgId, org.id)))
 		.limit(1);
@@ -342,9 +364,19 @@ export async function sendTestCard(
 			orgName: org.name,
 			origin: env.ORIGIN,
 			now: Date.now(),
-			style: row.statusStyle
+			style: row.statusStyle,
+			links: {
+				status: row.statusLinkStatus,
+				stats: row.statusLinkStats,
+				panel: row.statusLinkPanel
+			}
 		},
-		server,
+		{
+			id: server.id,
+			name: server.name,
+			publicStatus: org.allowPublicStatus && server.publicStatus,
+			publicStats: org.allowPublicStats && server.publicStats
+		},
 		live
 	);
 	const result = await postDiscord(env, row, {

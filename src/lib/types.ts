@@ -611,6 +611,14 @@ export interface WebhookView {
 	/** keeps a live status card per covered server in the channel, edited in place */
 	statusEnabled: boolean;
 	statusStyle: StatusStyle;
+	/** the fastest the card is re-edited, in seconds (30..300) */
+	statusInterval: number;
+	/** link the card to the public status page (takes effect only when that page is on) */
+	linkStatus: boolean;
+	/** link the card to the public leaderboard page (only when that page is on) */
+	linkStats: boolean;
+	/** link the card to the panel (a sign-in page for anyone without an account) */
+	linkPanel: boolean;
 	statusSentAt: string | null;
 	lastSentAt: string | null;
 	lastStatus: number | null;

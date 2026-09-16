@@ -628,6 +628,14 @@ export const webhooks = pgTable(
 		statusStyle: text('status_style', { enum: ['banner', 'compact', 'scoreboard'] })
 			.notNull()
 			.default('banner'),
+		/** the fastest a card is re-edited, in seconds (clamped 30..300); see webhook-status.ts */
+		statusIntervalS: integer('status_interval_s').notNull().default(60),
+		/** link the card to the public status page (only takes effect when that page is on) */
+		statusLinkStatus: boolean('status_link_status').notNull().default(true),
+		/** link the card to the public leaderboard page (only when that page is on) */
+		statusLinkStats: boolean('status_link_stats').notNull().default(true),
+		/** link the card to the panel (a sign-in page for anyone without an account); off by default */
+		statusLinkPanel: boolean('status_link_panel').notNull().default(false),
 		/** server id -> the Discord id of its message, once posted */
 		statusMessages: jsonb('status_messages'),
 		statusSentAt: ts('status_sent_at'),

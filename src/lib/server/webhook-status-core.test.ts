@@ -9,6 +9,7 @@ import {
 	LIMITS,
 	modeLabel,
 	squareFor,
+	statusLinkList,
 	statusMessage
 } from './webhook-status-core';
 
@@ -89,7 +90,8 @@ describe('buildStatusEmbed', () => {
 	test('the card: bars, map line, faction rows, columns, art and author', () => {
 		const e = buildStatusEmbed(opts, server, live());
 		expect(e.title).toBe('EU #1');
-		expect(e.url).toBe('https://rcon.example.com/server/s1');
+		// No link toggles: the card carries no title link (it never points the public at the panel).
+		expect(e.url).toBeUndefined();
 		expect(e.color).toBe(0xd86060); // Valkyra leads
 		expect(e.author).toEqual({
 			name: 'Bakurani Boys',
@@ -372,5 +374,59 @@ describe('uptime', () => {
 		expect(k(opts.now + 2 * 3600_000, startedAt)).not.toBe(k(opts.now + 4 * 3600_000, startedAt));
 		// a restart is a new start time
 		expect(k(opts.now, startedAt)).not.toBe(k(opts.now, '2026-09-13T11:00:00Z'));
+	});
+});
+
+describe('card links', () => {
+	const withLinks = (links: { status: boolean; stats: boolean; panel: boolean }, srv = server) =>
+		buildStatusEmbed({ ...opts, links }, srv, live());
+	const onSrv = { id: 's1', name: 'EU #1', publicStatus: true, publicStats: true };
+
+	test('no toggles: no title link, no links line', () => {
+		const e = buildStatusEmbed(opts, server, live());
+		expect(e.url).toBeUndefined();
+		expect(e.description).not.toContain('](');
+	});
+
+	test('panel link when opted in, even with no public pages', () => {
+		const e = withLinks({ status: false, stats: false, panel: true });
+		expect(e.url).toBe('https://rcon.example.com/server/s1');
+		expect(e.description).toContain('[Panel](https://rcon.example.com/server/s1)');
+	});
+
+	test('public links resolve only when the page is on', () => {
+		// wanted but the server has neither public page -> nothing links
+		const off = withLinks({ status: true, stats: true, panel: false });
+		expect(off.url).toBeUndefined();
+		expect(off.description).not.toContain('](');
+		// pages on -> title points at the status page, both links appear in order
+		const on = withLinks({ status: true, stats: true, panel: false }, onSrv);
+		expect(on.url).toBe('https://rcon.example.com/public/s1');
+		expect(on.description).toContain('[Live status](https://rcon.example.com/public/s1)');
+		expect(on.description).toContain('[Leaderboard](https://rcon.example.com/public/s1/stats)');
+	});
+
+	test('statusLinkList orders status, stats, panel and drops unavailable public pages', () => {
+		const all = statusLinkList(
+			{ ...opts, links: { status: true, stats: true, panel: true } },
+			onSrv
+		);
+		expect(all.map((l) => l.label)).toEqual(['Live status', 'Leaderboard', 'Panel']);
+		const statsOnly = statusLinkList(
+			{ ...opts, links: { status: true, stats: true, panel: false } },
+			{ id: 's1', name: 'EU #1', publicStatus: false, publicStats: true }
+		);
+		expect(statsOnly.map((l) => l.label)).toEqual(['Leaderboard']);
+	});
+
+	test('the change key moves when the links change, so the card re-renders', () => {
+		const k = (links: { status: boolean; stats: boolean; panel: boolean }) =>
+			statusMessage({ ...opts, links }, onSrv, live()).key;
+		expect(k({ status: true, stats: false, panel: false })).not.toBe(
+			k({ status: true, stats: true, panel: false })
+		);
+		expect(k({ status: false, stats: false, panel: true })).not.toBe(
+			k({ status: false, stats: false, panel: false })
+		);
 	});
 });

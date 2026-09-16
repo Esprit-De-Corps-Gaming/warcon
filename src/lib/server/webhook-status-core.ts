@@ -16,6 +16,16 @@ import type { DiscordPayload, Embed, EmbedField } from './webhook-delivery';
 export interface StatusServer {
 	id: string;
 	name: string;
+	/** the public live-status page is on for this server (its link may be offered) */
+	publicStatus?: boolean;
+	/** the public leaderboard page is on for this server */
+	publicStats?: boolean;
+}
+/** Which links a card carries. Public links resolve only when that page is actually on. */
+export interface StatusLinks {
+	status: boolean;
+	stats: boolean;
+	panel: boolean;
 }
 export interface StatusOptions {
 	appName: string;
@@ -26,6 +36,27 @@ export interface StatusOptions {
 	now: number;
 	/** banner unless told otherwise; see $lib/status-styles */
 	style?: StatusStyle;
+	/** which links the card carries; none when omitted */
+	links?: StatusLinks;
+}
+
+/**
+ * The links a card should carry, in the order they appear. A public link is only ever offered
+ * when its page is on for the server, so a card never points the public at a sign-in wall; the
+ * panel link is a deliberate opt-in for staff who do have accounts.
+ */
+export function statusLinkList(
+	opts: StatusOptions,
+	server: StatusServer
+): { label: string; url: string }[] {
+	const want = opts.links ?? { status: false, stats: false, panel: false };
+	const out: { label: string; url: string }[] = [];
+	if (want.status && server.publicStatus)
+		out.push({ label: 'Live status', url: `${opts.origin}/public/${server.id}` });
+	if (want.stats && server.publicStats)
+		out.push({ label: 'Leaderboard', url: `${opts.origin}/public/${server.id}/stats` });
+	if (want.panel) out.push({ label: 'Panel', url: `${opts.origin}/server/${server.id}` });
+	return out;
 }
 
 /** Discord's limits: per field value, per description, and across one message. */
@@ -182,15 +213,28 @@ export function fitEmbed(e: Embed): Embed {
 	return { ...e, fields };
 }
 
+/**
+ * The status embed, with its links applied: the title points at the first link the card carries
+ * (a public page when one is on, else the panel when opted in, else nothing), and any further
+ * links follow as a line under the body. renderCard builds everything else.
+ */
 export function buildStatusEmbed(
 	opts: StatusOptions,
 	server: StatusServer,
 	live: LiveView | null
 ): Embed {
+	const embed = renderCard(opts, server, live);
+	const links = statusLinkList(opts, server);
+	if (links[0]) embed.url = links[0].url;
+	const line = links.map((l) => `[${l.label}](${l.url})`).join('  ·  ');
+	if (line) embed.description = embed.description ? `${embed.description}\n${line}` : line;
+	return embed;
+}
+
+function renderCard(opts: StatusOptions, server: StatusServer, live: LiveView | null): Embed {
 	const https = opts.origin.startsWith('https://');
 	const base: Embed = {
 		title: clip(server.name, 200),
-		url: `${opts.origin}/server/${server.id}`,
 		description: '',
 		color: COLORS.empty,
 		timestamp: new Date(opts.now).toISOString(),
@@ -386,6 +430,10 @@ export function statusMessage(
 ): StatusMessage {
 	return {
 		payload: { content: '', embeds: [buildStatusEmbed(opts, server, live)] },
-		key: JSON.stringify([opts.style ?? 'banner', substance(server, live, opts.now)])
+		key: JSON.stringify([
+			opts.style ?? 'banner',
+			statusLinkList(opts, server).map((l) => l.url),
+			substance(server, live, opts.now)
+		])
 	};
 }

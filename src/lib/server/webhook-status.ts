@@ -12,13 +12,12 @@ import { memoryOf } from './observe';
 import { liveView } from './live';
 import { deleteDiscord, editDiscord, postDiscord, type PostResult } from './webhook-delivery';
 import { statusMessage, type StatusServer } from './webhook-status-core';
+import { clampStatusInterval } from '$lib/status-styles';
 
 export const STATUS_TICK_MS = 20_000;
 /** Re-edit an unchanged message this often so its embed timestamps do not drift into the past. */
 const HEARTBEAT_MS = 5 * 60_000;
-/** Edits of one message are at least this far apart, whatever the scores do. */
-const MIN_GAP_MS = 30_000;
-/** ...and further apart the more servers share one webhook: Discord allows ~30 requests a minute. */
+/** Edits spread further apart the more servers share one webhook: Discord allows ~30 requests a minute. */
 const GAP_PER_SERVER_MS = 4000;
 /** After a failed request, leave that webhook alone for this long. */
 const BACKOFF_MS = 60_000;
@@ -83,7 +82,12 @@ async function tick(env: Env): Promise<void> {
 /** One pass over every webhook that keeps status messages. */
 export async function refreshStatusMessages(env: Env, now = Date.now()): Promise<void> {
 	const hooks = await env.db
-		.select({ hook: webhooks, orgName: organizations.name })
+		.select({
+			hook: webhooks,
+			orgName: organizations.name,
+			allowPublicStatus: organizations.allowPublicStatus,
+			allowPublicStats: organizations.allowPublicStats
+		})
 		.from(webhooks)
 		.innerJoin(organizations, eq(organizations.id, webhooks.orgId))
 		.where(and(eq(webhooks.enabled, true), eq(webhooks.statusEnabled, true)));
@@ -92,23 +96,37 @@ export async function refreshStatusMessages(env: Env, now = Date.now()): Promise
 	for (const id of retryAt.keys()) if (!hooks.some((h) => h.hook.id === id)) retryAt.delete(id);
 	if (!hooks.length) return;
 	const rows = await env.db
-		.select({ id: servers.id, name: servers.name, orgId: servers.orgId })
+		.select({
+			id: servers.id,
+			name: servers.name,
+			orgId: servers.orgId,
+			publicStatus: servers.publicStatus,
+			publicStats: servers.publicStats
+		})
 		.from(servers)
 		.where(inArray(servers.orgId, [...new Set(hooks.map((h) => h.hook.orgId))]))
 		.orderBy(asc(servers.sortOrder), asc(servers.name));
-	const byOrg = new Map<string, StatusServer[]>();
+	const byOrg = new Map<string, (typeof rows)[number][]>();
 	for (const r of rows) {
 		const list = byOrg.get(r.orgId) ?? [];
-		list.push({ id: r.id, name: r.name });
+		list.push(r);
 		byOrg.set(r.orgId, list);
 	}
 	// Different webhooks are different rate-limit buckets, so they need not wait on each other;
 	// the servers of one webhook go one after another, in the order the dashboard shows them.
 	await Promise.all(
-		hooks.map(({ hook, orgName }) => {
+		hooks.map(({ hook, orgName, allowPublicStatus, allowPublicStats }) => {
 			const all = byOrg.get(hook.orgId) ?? [];
 			const only = hook.serverIds as string[] | null;
-			const list = only && only.length ? all.filter((s) => only.includes(s.id)) : all;
+			const covered = only && only.length ? all.filter((s) => only.includes(s.id)) : all;
+			// The public links resolve against the effective feature: the org allows it and the
+			// server switched it on. The org page and Servers → Edit set those.
+			const list: StatusServer[] = covered.map((s) => ({
+				id: s.id,
+				name: s.name,
+				publicStatus: allowPublicStatus && s.publicStatus,
+				publicStats: allowPublicStats && s.publicStats
+			}));
 			return refreshHook(env, hook, orgName, list, now).catch((err) =>
 				console.error(`[warcon] status messages ${hook.label}`, err)
 			);
@@ -135,13 +153,21 @@ async function refreshHook(
 		}
 		await env.db.update(webhooks).set({ statusMessages: map }).where(eq(webhooks.id, hook.id));
 	}
-	const gap = Math.max(MIN_GAP_MS, list.length * GAP_PER_SERVER_MS);
+	const gap = Math.max(
+		clampStatusInterval(hook.statusIntervalS) * 1000,
+		list.length * GAP_PER_SERVER_MS
+	);
 	const opts = {
 		appName: env.APP_NAME || 'Warcon',
 		orgName,
 		origin: env.ORIGIN,
 		now,
-		style: hook.statusStyle
+		style: hook.statusStyle,
+		links: {
+			status: hook.statusLinkStatus,
+			stats: hook.statusLinkStats,
+			panel: hook.statusLinkPanel
+		}
 	};
 	for (const server of list) {
 		const key = `${hook.id}:${server.id}`;

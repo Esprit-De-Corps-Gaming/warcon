@@ -9,7 +9,13 @@
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import type { WebhookView } from '$lib/types';
-	import { STATUS_STYLE_LABELS, STATUS_STYLES, type StatusStyle } from '$lib/status-styles';
+	import {
+		STATUS_INTERVAL_LABELS,
+		STATUS_INTERVALS,
+		STATUS_STYLE_LABELS,
+		STATUS_STYLES,
+		type StatusStyle
+	} from '$lib/status-styles';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -67,6 +73,20 @@
 			'Style changed. The card updates within a minute.'
 		);
 	}
+	function setRefresh(w: WebhookView, statusInterval: number) {
+		void run(
+			() => api('PATCH', `${orgPath}/webhooks/${w.id}`, { statusInterval }),
+			'Refresh interval saved.'
+		);
+	}
+	function setLink(w: WebhookView, patch: Record<string, boolean>) {
+		void run(
+			() => api('PATCH', `${orgPath}/webhooks/${w.id}`, patch),
+			'Card links updated. The card refreshes within a minute.'
+		);
+	}
+	// The public pages are switched on under Servers → Edit; a link only takes effect once its page is on.
+	let feat = $derived(data.server.features);
 	function toggle(w: WebhookView) {
 		void run(
 			() => api('PATCH', `${orgPath}/webhooks/${w.id}`, { enabled: !w.enabled }),
@@ -153,6 +173,75 @@
 					{/if}
 				</span>
 			</div>
+			{#if ownHere(w)}
+				<div class="mb-3 rounded-ctl border border-white/8 bg-ink-950/40 px-3 py-2.5">
+					<div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+						<label class="inline-flex items-center gap-1.5 text-[12.5px] text-mist-400">
+							Refresh
+							<select
+								class="input w-auto py-1"
+								value={w.statusInterval}
+								disabled={busy}
+								aria-label="Refresh interval"
+								onchange={(e) => setRefresh(w, Number(e.currentTarget.value))}
+							>
+								{#each STATUS_INTERVALS as s (s)}<option value={s}>{STATUS_INTERVAL_LABELS[s]}</option
+									>{/each}
+							</select>
+						</label>
+						<span class="inline-flex flex-wrap items-center gap-x-4 gap-y-1.5">
+							<span class="caps text-mist-600">Links</span>
+							<label
+								class="inline-flex items-center gap-1.5 text-[12.5px] {feat.publicStatus
+									? 'text-mist-300'
+									: 'text-mist-600'}"
+								title={feat.publicStatus
+									? undefined
+									: 'Turn the public status page on under Servers → Edit to link it'}
+							>
+								<input
+									type="checkbox"
+									checked={w.linkStatus}
+									disabled={busy || !feat.publicStatus}
+									onchange={(e) => setLink(w, { linkStatus: e.currentTarget.checked })}
+								/>
+								Live status page
+							</label>
+							<label
+								class="inline-flex items-center gap-1.5 text-[12.5px] {feat.publicStats
+									? 'text-mist-300'
+									: 'text-mist-600'}"
+								title={feat.publicStats
+									? undefined
+									: 'Turn the public leaderboard on under Servers → Edit to link it'}
+							>
+								<input
+									type="checkbox"
+									checked={w.linkStats}
+									disabled={busy || !feat.publicStats}
+									onchange={(e) => setLink(w, { linkStats: e.currentTarget.checked })}
+								/>
+								Leaderboard page
+							</label>
+							<label class="inline-flex items-center gap-1.5 text-[12.5px] text-mist-300">
+								<input
+									type="checkbox"
+									checked={w.linkPanel}
+									disabled={busy}
+									onchange={(e) => setLink(w, { linkPanel: e.currentTarget.checked })}
+								/>
+								Panel (sign-in)
+							</label>
+						</span>
+					</div>
+					{#if w.linkPanel}
+						<p class="note mt-1.5">
+							The panel link opens a sign-in page for anyone without an account, so it suits a
+							staff-only channel.
+						</p>
+					{/if}
+				</div>
+			{/if}
 		{:else}
 			<p class="mb-3 text-[13px] text-mist-600">No channel carries this server's card yet.</p>
 		{/each}
