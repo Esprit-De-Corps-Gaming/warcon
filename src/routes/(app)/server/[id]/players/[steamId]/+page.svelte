@@ -206,6 +206,11 @@
 					class="ml-auto text-[12px] text-accent hover:underline">Leaderboards →</a
 				>
 			</div>
+			{#if !data.server.features.stats}
+				<p class="mb-3 text-[12.5px] text-warn">
+					Match statistics are off for this server; matches played here are not recorded.
+				</p>
+			{/if}
 			{#if c.matches || c.recent.length}
 				<div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
 					{#each [['Matches', fmtNum(c.matches), rankText(c.ranks.minutes) + ' by playtime'], ['Record', `${c.wins}–${c.losses}–${c.draws}`, c.winRate === null ? 'win % after 3 decided' : `${c.winRate}% · ${rankText(c.ranks.winRate)}`], ['Kills', fmtNum(c.kills), rankText(c.ranks.kills)], ['K/D', c.kd.toFixed(2), rankText(c.ranks.kd)], ['Kills / h', c.kph.toFixed(1), rankText(c.ranks.kph)], ['Best match', fmtNum(c.bestKills) + ' kills', c.since ? `since ${fmtTime(c.since).slice(0, 12)}` : '']] as [label, value, sub] (label)}

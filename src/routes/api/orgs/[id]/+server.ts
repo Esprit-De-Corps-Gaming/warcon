@@ -4,14 +4,20 @@ import { requireOrgRole, requireOwner } from '$lib/server/access';
 import { deleteOrg, setMembersReserved, setOrgControls, updateOrg } from '$lib/server/orgs';
 
 /**
- * {name} or {membersReserved} for org owners; {serverLimit, suspended, reason} for the site owner
- * only.
+ * {name} or {membersReserved} for org owners; {serverLimit, suspended, reason, allowStats,
+ * allowPublicStatus, allowPublicStats} for the site owner only.
  */
 export const PATCH = route(async (event) => {
 	const env = getEnv();
 	const body = await readJson(event.request);
 	const { org, user } = await requireOrgRole(env, event.locals, param(event, 'id'), 'owner');
-	if (body.serverLimit !== undefined || body.suspended !== undefined) {
+	if (
+		body.serverLimit !== undefined ||
+		body.suspended !== undefined ||
+		body.allowStats !== undefined ||
+		body.allowPublicStatus !== undefined ||
+		body.allowPublicStats !== undefined
+	) {
 		requireOwner(event.locals);
 		await setOrgControls(env, event.request, user, org, body);
 	} else if (body.membersReserved !== undefined) {

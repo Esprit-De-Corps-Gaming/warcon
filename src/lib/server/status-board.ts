@@ -23,6 +23,7 @@ import {
 } from './db/schema';
 import { encryptSecret } from './crypto';
 import { validateWebhookUrl } from './webhooks';
+import { effectiveFeatures } from './features';
 import { deleteDiscord, editDiscord, postDiscord, type PostResult } from './webhook-delivery';
 import { buildBoardEmbeds, type BoardInput } from './status-board-embeds';
 import type { Player, StatusBoardView, Status } from '$lib/types';
@@ -238,7 +239,7 @@ export async function refreshBoardNow(
 		env,
 		server,
 		[row],
-		{ status, players, problem, ts: new Date() },
+		{ status, players, problem, ts: new Date(), stats: effectiveFeatures(org, server).stats },
 		true
 	);
 	await writeAudit(env, req, {
@@ -263,6 +264,8 @@ export interface PollContext {
 	players: Player[];
 	problem?: string;
 	ts: Date;
+	/** match statistics are on for this server; when off, the board shows live counters instead */
+	stats?: boolean;
 }
 
 /** Boards of this server whose interval has elapsed (or that never posted). */
@@ -308,7 +311,8 @@ export async function markBoardsOffline(
 	}
 }
 
-async function currentMatchData(
+/** The open match, everyone seen in it, and the last 24 hours; also feeds the public status page. */
+export async function currentMatchData(
 	env: Env,
 	serverId: string,
 	ts: Date
@@ -376,6 +380,16 @@ async function renderBoards(
 		ctx.status || !offlineOnly
 			? await currentMatchData(env, server.id, ctx.ts)
 			: { match: null, matchPlayers: [], day: null };
+	// Without match statistics there are no per-match rows: rank the live counters instead
+	// (what each connected player has done since they joined this match).
+	if (ctx.stats === false)
+		data.matchPlayers = ctx.players.map((p) => ({
+			steamId: p.steamId,
+			name: p.name,
+			faction: p.faction,
+			kills: p.kills,
+			deaths: p.deaths
+		}));
 	const results: PostResult[] = [];
 	for (const board of boards) {
 		const embeds = buildBoardEmbeds({

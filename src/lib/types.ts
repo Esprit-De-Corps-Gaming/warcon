@@ -18,6 +18,28 @@ export interface ServerInfo {
 	manager: boolean;
 	sortOrder: number;
 	demo: boolean;
+	/** the org owner's switches on this server */
+	switches: ServerSwitches;
+	/** the site owner's allowances on its organisation */
+	allowed: OrgAllowances;
+	/** what is actually on: both levels agree (see features.ts) */
+	features: ServerFeatures;
+}
+
+export interface OrgAllowances {
+	allowStats: boolean;
+	allowPublicStatus: boolean;
+	allowPublicStats: boolean;
+}
+export interface ServerSwitches {
+	statsEnabled: boolean;
+	publicStatus: boolean;
+	publicStats: boolean;
+}
+export interface ServerFeatures {
+	stats: boolean;
+	publicStatus: boolean;
+	publicStats: boolean;
 }
 
 export interface CatalogItem {
@@ -155,6 +177,8 @@ export interface OrgView {
 	/** the site owner's per-org override, if any */
 	customServerLimit: number | null;
 	suspended: { at: string; reason: string } | null;
+	/** the site owner's allowances; each server still has its own switches */
+	allowed: OrgAllowances;
 	createdBy: { username: string; name: string } | null;
 	createdAt: string | null;
 }
@@ -462,6 +486,42 @@ export interface StatusBoardView {
 	lastStatus: number | null;
 	lastError: string;
 	createdAt: string | null;
+}
+
+// ---- public pages (no account) ------------------------------------------------------------------
+
+/** The public status page's data: the poller's last sample plus the open match, never live RCON. */
+export interface PublicStatusView {
+	server: { id: string; name: string };
+	org: { name: string; slug: string };
+	features: { publicStats: boolean; stats: boolean };
+	pollSeconds: number;
+	generatedAt: string;
+	/** the last reachable sample; null before the first */
+	sampledAt: string | null;
+	/** the latest sample reached the server */
+	reachable: boolean;
+	error: string;
+	map: string | null;
+	experiences: string[];
+	lighting: string | null;
+	/** match clock at sampledAt; the page keeps counting from there */
+	matchSeconds: number | null;
+	playerCount: number;
+	maxPlayers: number;
+	scores: { name: string; score: number }[];
+	cash: { name: string; cash: number }[];
+	match: { startedAt: string; peakPlayers: number } | null;
+	/** this match's players ranked by kills (session totals when statistics are off) */
+	players: {
+		steamId: string;
+		name: string;
+		faction: string | null;
+		kills: number;
+		deaths: number;
+		online: boolean;
+	}[];
+	day: { peak: number; unique: number; matches: number } | null;
 }
 
 // ---- organisation lists (bans and reserved slots pushed to every server) ------------------------

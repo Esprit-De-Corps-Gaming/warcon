@@ -20,6 +20,7 @@ import { getProfiles, steamEnabled } from './steam';
 import { runTriggers } from './triggers';
 import { counterDelta, matchBoundary, matchOutcome, type Score } from './match-track';
 import { markBoardsOffline, refreshBoards } from './status-board';
+import { effectiveFeatures } from './features';
 import {
 	expireEntries,
 	liveObserved,
@@ -182,9 +183,17 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 			latencyMs: Date.now() - started
 		});
 		// The match first: when this sample starts a new one, the players' counters have reset with
-		// it, and their increments belong to the new match.
+		// it, and their increments belong to the new match. Per-match player rows are written only
+		// where match statistics are switched on (both the org's allowance and the server's switch).
+		const features = effectiveFeatures(org, server);
 		const matchId = await reconcileMatch(env, server.id, ts, status, m, scores);
-		const { joined, firstVisit } = await reconcileSessions(env, server.id, ts, players, matchId);
+		const { joined, firstVisit } = await reconcileSessions(
+			env,
+			server.id,
+			ts,
+			players,
+			features.stats ? matchId : null
+		);
 		const observed = await refreshLists(env, server, client, m, ts).catch((err) => {
 			console.warn('[warcon] ban list snapshot', publicMessage(err));
 			return null;
@@ -202,7 +211,7 @@ export async function pollServer(env: Env, server: ServerRow, org: OrgRow): Prom
 		});
 		if (synced?.observed) m.reserved = new Set(synced.observed.reserved);
 		// Discord status boards whose interval has elapsed; never throws.
-		await refreshBoards(env, server, { status, players, ts });
+		await refreshBoards(env, server, { status, players, ts, stats: features.stats });
 		// Warm the Steam cache for newcomers so the players table and dossier have their data.
 		if (joined.length && steamEnabled(env))
 			await getProfiles(

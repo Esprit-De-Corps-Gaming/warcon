@@ -288,6 +288,30 @@
 			false
 		);
 	}
+	const ALLOWANCES = [
+		{
+			key: 'allowStats',
+			name: 'Match statistics',
+			blurb: 'per-match rows: leaderboards, careers, Discord board tables'
+		},
+		{
+			key: 'allowPublicStatus',
+			name: 'Public status pages',
+			blurb: 'a live page per server without sign-in'
+		},
+		{
+			key: 'allowPublicStats',
+			name: 'Public leaderboards and careers',
+			blurb: 'public stats pages; needs match statistics'
+		}
+	] as const;
+	function setAllowance(key: (typeof ALLOWANCES)[number]['key'], on: boolean) {
+		void run(
+			() => api('PATCH', orgPath, { [key]: on }),
+			on ? 'Allowed.' : 'Not allowed any more.',
+			false
+		);
+	}
 	async function suspend() {
 		if (
 			!(await confirmDialog(
@@ -475,6 +499,27 @@
 					Blank uses the instance default. Currently {data.org.serverCount} of {data.org
 						.serverLimit}.
 				</p>
+				<div class="mt-3 border-t border-white/8 pt-3">
+					<span class="field-label">Features this organisation may switch on</span>
+					<div class="space-y-1.5">
+						{#each ALLOWANCES as a (a.key)}
+							<label class="flex items-start gap-2 text-[13px]">
+								<input
+									type="checkbox"
+									class="mt-0.5"
+									checked={data.org.allowed[a.key]}
+									disabled={busy}
+									onchange={(e) => setAllowance(a.key, e.currentTarget.checked)}
+								/>
+								<span>{a.name} <span class="text-[12px] text-mist-400">· {a.blurb}</span></span>
+							</label>
+						{/each}
+					</div>
+					<p class="note">
+						Each server still has its own switch under Servers; a feature runs only when both agree.
+						Turning match statistics off stops new rows; old ones age out after a year.
+					</p>
+				</div>
 				<div class="mt-3 border-t border-white/8 pt-3">
 					{#if data.org.suspended}
 						<button type="button" class="btn btn-sm" onclick={restore} disabled={busy}

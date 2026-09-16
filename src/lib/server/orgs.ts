@@ -17,6 +17,7 @@ import type { OrgInviteRow } from './db/schema';
 import type { Db } from './db';
 import { ensureOrgLists } from './lists';
 import { fanOut } from './lists-sync';
+import { parseAllowances, type OrgAllowances } from './features';
 import type { InviteStatus, InviteView, ListSyncSummary, OrgMemberView, OrgView } from '$lib/types';
 
 /** A Drizzle transaction handle (what `db.transaction(async (tx) => ...)` passes). */
@@ -94,6 +95,11 @@ const shapeOrg = (
 	serverLimit: serverLimitFor(env, o),
 	customServerLimit: o.serverLimit,
 	suspended: o.suspendedAt ? { at: o.suspendedAt.toISOString(), reason: o.suspendedReason } : null,
+	allowed: {
+		allowStats: o.allowStats,
+		allowPublicStatus: o.allowPublicStatus,
+		allowPublicStats: o.allowPublicStats
+	},
 	createdBy: creator ? { username: creator.username || '', name: creator.name } : null,
 	createdAt: iso(o.createdAt)
 });
@@ -165,6 +171,15 @@ export async function setOrgControls(
 			set.suspendedReason = '';
 			changes.suspended = false;
 		}
+	}
+	// Feature allowances: what the org's servers may switch on (see features.ts).
+	for (const [key, value] of Object.entries(parseAllowances(body)) as [
+		keyof OrgAllowances,
+		boolean
+	][]) {
+		if (org[key] === value) continue;
+		set[key] = value;
+		changes[key] = value;
 	}
 	if (!Object.keys(changes).length) throw new ApiError(400, 'Nothing to update.');
 	set.updatedAt = new Date();

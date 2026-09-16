@@ -132,6 +132,10 @@ export const organizations = pgTable('organizations', {
 	suspendedReason: text('suspended_reason').notNull().default(''),
 	/** members who set a SteamID on their account get a reserved slot on every org server */
 	membersReserved: boolean('members_reserved').notNull().default(false),
+	/** site-owner allowances; each server still has its own switch (see features.ts) */
+	allowStats: boolean('allow_stats').notNull().default(true),
+	allowPublicStatus: boolean('allow_public_status').notNull().default(true),
+	allowPublicStats: boolean('allow_public_stats').notNull().default(true),
 	createdAt: ts('created_at').notNull().defaultNow(),
 	updatedAt: ts('updated_at').notNull().defaultNow()
 });
@@ -198,6 +202,10 @@ export const servers = pgTable('servers', {
 	sortOrder: integer('sort_order').notNull().default(0),
 	/** Set when the site owner saved the target: private addresses (same box, LAN) are permitted. */
 	allowPrivate: boolean('allow_private').notNull().default(false),
+	/** org-owner switches, effective only with the org's allowances (see features.ts) */
+	statsEnabled: boolean('stats_enabled').notNull().default(true),
+	publicStatus: boolean('public_status').notNull().default(false),
+	publicStats: boolean('public_stats').notNull().default(false),
 	createdBy: text('created_by'),
 	createdAt: ts('created_at').notNull().defaultNow(),
 	updatedAt: ts('updated_at').notNull().defaultNow()

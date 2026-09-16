@@ -85,6 +85,13 @@
       "when": 1789431911334,
       "tag": "0011_status_board_own_webhook",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789570745386,
+      "tag": "0012_feature_switches",
+      "breakpoints": true
     }
   ]
 }

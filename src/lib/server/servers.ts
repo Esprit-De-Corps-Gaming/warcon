@@ -18,6 +18,7 @@ import { GameError, WardogsClient } from './rcon';
 import { serverGrants, servers, user } from './db/schema';
 import { assertCanAddServer, ensureMemberships } from './orgs';
 import { ensureServerLists } from './lists';
+import { parseSwitches } from './features';
 
 export interface TargetFields {
 	name?: string;
@@ -145,6 +146,7 @@ export async function createServer(
 			passwordEnc: encryptSecret(env, password),
 			notes: t.notes || '',
 			sortOrder: t.sortOrder || 0,
+			...parseSwitches(body),
 			createdBy: actor.id
 		});
 		await ensureServerLists(tx, id, orgId);
@@ -181,7 +183,8 @@ export async function updateServer(
 			err
 		)
 	);
-	const set: Partial<typeof servers.$inferInsert> = { ...t };
+	const switches = parseSwitches(body);
+	const set: Partial<typeof servers.$inferInsert> = { ...t, ...switches };
 	if (typeof body.password === 'string' && body.password)
 		set.passwordEnc = encryptSecret(env, body.password);
 	if (!Object.keys(set).length) throw new ApiError(400, 'Nothing to update.');
@@ -194,7 +197,7 @@ export async function updateServer(
 		category: 'server',
 		action: 'server.update',
 		outcome: 'ok',
-		detail: { ...t, credentialRotated: !!body.password }
+		detail: { ...t, ...switches, credentialRotated: !!body.password }
 	});
 }
 

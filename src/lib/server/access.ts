@@ -8,6 +8,12 @@ import type { Env } from './env';
 import { isDemoServer } from './env';
 import { ApiError } from './http';
 import {
+	effectiveFeatures,
+	type Features,
+	type OrgAllowances,
+	type ServerSwitches
+} from './features';
+import {
 	loginAttempts,
 	orgMembers,
 	organizations,
@@ -125,6 +131,8 @@ export interface OrgSummary {
 	suspended: boolean;
 	/** may open the org's ban and reserved lists: owners, and admins of any of its servers */
 	lists: boolean;
+	/** the site owner's feature allowances (what its servers may switch on) */
+	allowed: OrgAllowances;
 }
 
 /** Orgs where the user holds an admin grant on at least one server. */
@@ -145,7 +153,8 @@ export async function userOrgs(env: Env, user: SessionUser): Promise<OrgSummary[
 		slug: o.slug,
 		role,
 		suspended: !!o.suspendedAt,
-		lists
+		lists,
+		allowed: allowancesOf(o)
 	});
 	if (user.role === 'owner') {
 		const all = await env.db.select().from(organizations).orderBy(asc(organizations.name));
@@ -294,19 +303,35 @@ export type ServerSummary = {
 	manager: boolean;
 	sortOrder: number;
 	demo: boolean;
+	switches: ServerSwitches;
+	allowed: OrgAllowances;
+	features: Features;
 };
+
+/** The org owner's switches on a server row. */
+export const switchesOf = (s: ServerSwitches): ServerSwitches => ({
+	statsEnabled: s.statsEnabled,
+	publicStatus: s.publicStatus,
+	publicStats: s.publicStats
+});
+/** The site owner's allowances on an org row. */
+export const allowancesOf = (o: OrgAllowances): OrgAllowances => ({
+	allowStats: o.allowStats,
+	allowPublicStatus: o.allowPublicStatus,
+	allowPublicStats: o.allowPublicStats
+});
 
 export function shapeServer(
 	env: Env,
 	s: ServerRow,
-	orgName: string,
+	org: Pick<OrgRow, 'name'> & OrgAllowances,
 	role: ServerRole,
 	manager: boolean
 ): ServerSummary {
 	return {
 		id: s.id,
 		orgId: s.orgId,
-		orgName,
+		orgName: org.name,
 		name: s.name,
 		host: s.host,
 		port: s.port,
@@ -315,7 +340,10 @@ export function shapeServer(
 		role,
 		manager,
 		sortOrder: s.sortOrder,
-		demo: isDemoServer(env, s)
+		demo: isDemoServer(env, s),
+		switches: switchesOf(s),
+		allowed: allowancesOf(org),
+		features: effectiveFeatures(org, s)
 	};
 }
 
@@ -324,16 +352,16 @@ export async function accessibleServers(env: Env, user: SessionUser): Promise<Se
 	const order = [asc(organizations.name), asc(servers.sortOrder), asc(servers.name)];
 	if (user.role === 'owner') {
 		const rowsAll = await env.db
-			.select({ server: servers, orgName: organizations.name })
+			.select({ server: servers, org: organizations })
 			.from(servers)
 			.innerJoin(organizations, eq(organizations.id, servers.orgId))
 			.orderBy(...order);
-		return rowsAll.map((r) => shapeServer(env, r.server, r.orgName, 'admin', true));
+		return rowsAll.map((r) => shapeServer(env, r.server, r.org, 'admin', true));
 	}
 	const rows = await env.db
 		.select({
 			server: servers,
-			orgName: organizations.name,
+			org: organizations,
 			grant: serverGrants.role,
 			orgRole: orgMembers.role
 		})
@@ -353,7 +381,7 @@ export async function accessibleServers(env: Env, user: SessionUser): Promise<Se
 		.orderBy(...order);
 	return rows.map((r) => {
 		const manager = r.orgRole === 'owner';
-		return shapeServer(env, r.server, r.orgName, manager ? 'admin' : r.grant!, manager);
+		return shapeServer(env, r.server, r.org, manager ? 'admin' : r.grant!, manager);
 	});
 }
 

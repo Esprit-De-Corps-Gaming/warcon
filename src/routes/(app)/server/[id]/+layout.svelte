@@ -51,6 +51,21 @@
 				<span class="font-mono">{data.server.host}:{data.server.port}</span>
 				<RoleBadge role={data.server.role} />
 				{#if data.server.demo}<Badge tone="info">demo</Badge>{/if}
+				{#if !data.server.features.stats}<span title="Match statistics are off for this server"
+						><Badge>no stats</Badge></span
+					>{/if}
+				{#if data.server.features.publicStatus}<a
+						href="/public/{encodeURIComponent(data.server.id)}"
+						class="text-accent hover:underline"
+						target="_blank"
+						rel="noopener">public status ↗</a
+					>{/if}
+				{#if data.server.features.publicStats}<a
+						href="/public/{encodeURIComponent(data.server.id)}/stats"
+						class="text-accent hover:underline"
+						target="_blank"
+						rel="noopener">public stats ↗</a
+					>{/if}
 				{#if data.server.notes}<span class="truncate">· {data.server.notes}</span>{/if}
 			</div>
 		</div>
