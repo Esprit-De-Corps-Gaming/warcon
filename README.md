@@ -381,13 +381,14 @@ status board's title opens the server's public status page and its text links to
 leaderboard, for the pages that are on. (Discord reserves real buttons for application-owned
 webhooks, so a channel webhook's card carries links, not buttons.)
 
-A server with a **game address** (host:port players connect to, set under Servers → Edit; not
-the RCON listener) and its status page on also gets `/public/<serverId>/join`: a "Join the
-server" button on the public pages and a "Join" link on the status board lead there, and the
-page offers `steam://connect/<address>`, a launch with `+connect`, and a plain launch of the
-game with the address to copy. Which of the Steam handshakes WARDOGS honours is undocumented;
-each is one click, and the plain launch plus the address always works. Discord and browsers
-never accept `steam://` links directly, which is why the page sits in between.
+A server with a **join code** (the 36-character code the game's server browser shows for a
+community server, set under Servers → Edit; wardogservers.com lists it too) and its status page
+on also gets `/public/<serverId>/join`: a "Join the server" button on the public pages and a
+"Join" link on the status board lead there, and the page shows the code with a copy button, the
+steps (launch, server browser, Join by code), and a Steam link that launches the game. WARDOGS
+joins only through its own browser: it publishes no server address and answers no Steam server
+query, so `steam://connect` and `+connect` cannot work and no link can drop a player straight
+in. (Discord and browsers never accept `steam://` links directly either.)
 
 ### Invite links
 

@@ -303,8 +303,8 @@ export type ServerSummary = {
 	manager: boolean;
 	sortOrder: number;
 	demo: boolean;
-	/** host:port players connect to; '' = not set */
-	joinAddress: string;
+	/** the join code players enter in the game's server browser; '' = not set */
+	joinCode: string;
 	switches: ServerSwitches;
 	allowed: OrgAllowances;
 	features: Features;
@@ -343,7 +343,7 @@ export function shapeServer(
 		manager,
 		sortOrder: s.sortOrder,
 		demo: isDemoServer(env, s),
-		joinAddress: s.joinAddress,
+		joinCode: s.joinCode,
 		switches: switchesOf(s),
 		allowed: allowancesOf(org),
 		features: effectiveFeatures(org, s)

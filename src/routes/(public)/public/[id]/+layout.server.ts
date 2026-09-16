@@ -12,8 +12,8 @@ export const load: LayoutServerLoad = async ({ params }) => {
 		publicServer: {
 			id: t.server.id,
 			name: t.server.name,
-			/** the join page exists when the status page is on and an address is set */
-			join: t.features.publicStatus && !!t.server.joinAddress
+			/** the join page exists when the status page is on and a join code is set */
+			join: t.features.publicStatus && !!t.server.joinCode
 		},
 		publicOrg: { name: t.org.name, slug: t.org.slug, discordUrl: t.org.discordUrl },
 		features: t.features

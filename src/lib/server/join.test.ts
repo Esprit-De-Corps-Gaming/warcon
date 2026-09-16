@@ -1,33 +1,27 @@
 import { describe, expect, test } from 'bun:test';
-import { steamJoinLinks, validateJoinAddress } from './join';
+import { steamLaunchLink, validateJoinCode } from './join';
 
-describe('validateJoinAddress', () => {
-	test('ip and hostname with a port', () => {
-		expect(validateJoinAddress('165.217.128.166:9025')).toBe('165.217.128.166:9025');
-		expect(validateJoinAddress(' Play.Example.ORG:7777 ')).toBe('play.example.org:7777');
+describe('validateJoinCode', () => {
+	test('a community server UUID, cleaned up', () => {
+		expect(validateJoinCode(' 0E0D5726-FD99-44CA-BF62-AD2D43F79204 ')).toBe(
+			'0e0d5726-fd99-44ca-bf62-ad2d43f79204'
+		);
+	});
+	test('an official server number keeps its leading zeros', () => {
+		expect(validateJoinCode('004512')).toBe('004512');
 	});
 	test('blank clears', () => {
-		expect(validateJoinAddress('')).toBe('');
-		expect(validateJoinAddress(undefined)).toBe('');
+		expect(validateJoinCode('')).toBe('');
+		expect(validateJoinCode(undefined)).toBe('');
 	});
-	test('refuses missing or bad ports and hosts', () => {
-		for (const bad of [
-			'165.217.128.166',
-			'165.217.128.166:0',
-			'host:70000',
-			'steam://x:1',
-			'a b:1'
-		])
-			expect(() => validateJoinAddress(bad)).toThrow('host:port');
+	test('anything else is refused', () => {
+		for (const bad of ['165.217.128.166:9025', 'abc', '0e0d5726-fd99-44ca-bf62', 'x'.repeat(36)])
+			expect(() => validateJoinCode(bad)).toThrow('join code');
 	});
 });
 
-describe('steamJoinLinks', () => {
-	test('the three variants', () => {
-		expect(steamJoinLinks('165.217.128.166:9025')).toEqual({
-			connect: 'steam://connect/165.217.128.166:9025',
-			run: 'steam://run/1867240//+connect%20165.217.128.166%3A9025/',
-			launch: 'steam://rungameid/1867240'
-		});
+describe('steamLaunchLink', () => {
+	test('launches WARDOGS', () => {
+		expect(steamLaunchLink()).toBe('steam://rungameid/1867240');
 	});
 });

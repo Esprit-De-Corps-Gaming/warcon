@@ -78,14 +78,18 @@ describe('publicLinks', () => {
 			publicLinks('http://localhost:5173', allowAll, { ...allOn, publicStats: false, id: 'x' })
 		).toEqual({ status: 'http://localhost:5173/public/x' });
 		expect(
-			publicLinks('http://h', allowAll, { ...allOn, id: 'x', joinAddress: '1.2.3.4:9025' }).join
+			publicLinks('http://h', allowAll, {
+				...allOn,
+				id: 'x',
+				joinCode: '0e0d5726-fd99-44ca-bf62-ad2d43f79204'
+			}).join
 		).toBe('http://h/public/x/join');
 		expect(
 			publicLinks('http://h', allowAll, {
 				...allOn,
 				publicStatus: false,
 				id: 'x',
-				joinAddress: '1.2.3.4:9025'
+				joinCode: '0e0d5726-fd99-44ca-bf62-ad2d43f79204'
 			}).join
 		).toBeUndefined();
 		expect(

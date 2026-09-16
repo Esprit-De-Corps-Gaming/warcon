@@ -18,8 +18,8 @@ export interface ServerInfo {
 	manager: boolean;
 	sortOrder: number;
 	demo: boolean;
-	/** host:port players connect to (the public join page); '' = not set */
-	joinAddress: string;
+	/** the join code players enter in the game's server browser (the public join page); '' = not set */
+	joinCode: string;
 	/** the org owner's switches on this server */
 	switches: ServerSwitches;
 	/** the site owner's allowances on its organisation */

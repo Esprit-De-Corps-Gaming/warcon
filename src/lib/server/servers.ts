@@ -19,15 +19,15 @@ import { serverGrants, servers, user } from './db/schema';
 import { assertCanAddServer, ensureMemberships } from './orgs';
 import { ensureServerLists } from './lists';
 import { parseSwitches } from './features';
-import { validateJoinAddress } from './join';
+import { validateJoinCode } from './join';
 
-/** The players' connect address, when the body carries one; a bad one is a 400. */
-function parseJoinAddress(body: Record<string, unknown>): { joinAddress?: string } {
-	if (body.joinAddress === undefined) return {};
+/** The server's join code, when the body carries one; a bad one is a 400. */
+function parseJoinCode(body: Record<string, unknown>): { joinCode?: string } {
+	if (body.joinCode === undefined) return {};
 	try {
-		return { joinAddress: validateJoinAddress(body.joinAddress) };
+		return { joinCode: validateJoinCode(body.joinCode) };
 	} catch (err) {
-		throw new ApiError(400, err instanceof Error ? err.message : 'Bad game address.');
+		throw new ApiError(400, err instanceof Error ? err.message : 'Bad join code.');
 	}
 }
 
@@ -158,7 +158,7 @@ export async function createServer(
 			notes: t.notes || '',
 			sortOrder: t.sortOrder || 0,
 			...parseSwitches(body),
-			...parseJoinAddress(body),
+			...parseJoinCode(body),
 			createdBy: actor.id
 		});
 		await ensureServerLists(tx, id, orgId);
@@ -195,7 +195,7 @@ export async function updateServer(
 			err
 		)
 	);
-	const switches = { ...parseSwitches(body), ...parseJoinAddress(body) };
+	const switches = { ...parseSwitches(body), ...parseJoinCode(body) };
 	const set: Partial<typeof servers.$inferInsert> = { ...t, ...switches };
 	if (typeof body.password === 'string' && body.password)
 		set.passwordEnc = encryptSecret(env, body.password);

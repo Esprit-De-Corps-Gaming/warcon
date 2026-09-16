@@ -36,7 +36,7 @@
 				statsEnabled: boolean;
 				publicStatus: boolean;
 				publicStats: boolean;
-				joinAddress: string;
+				joinCode: string;
 		  }
 		| { kind: 'test'; server: ServerInfo; result: TestOk }
 		| {
@@ -65,7 +65,7 @@
 			statsEnabled: s?.switches.statsEnabled ?? true,
 			publicStatus: s?.switches.publicStatus ?? false,
 			publicStats: s?.switches.publicStats ?? false,
-			joinAddress: s?.joinAddress ?? ''
+			joinCode: s?.joinCode ?? ''
 		};
 	};
 	/** the site owner's allowances for the org the dialog's server belongs to */
@@ -125,7 +125,7 @@
 			statsEnabled: d.statsEnabled,
 			publicStatus: d.publicStatus,
 			publicStats: d.publicStats,
-			joinAddress: d.joinAddress.trim()
+			joinCode: d.joinCode.trim()
 		};
 		if (d.password) payload.password = d.password;
 		if (d.server) {
@@ -351,16 +351,17 @@
 				>
 			</div>
 			<label class="block"
-				><span class="field-label">Game address (players connect here)</span><input
+				><span class="field-label">Join code (shown in the game's server browser)</span><input
 					class="input font-mono text-[12.5px]"
 					type="text"
-					bind:value={d.joinAddress}
-					placeholder="203.0.113.7:9025 — optional"
-					maxlength="260"
+					bind:value={d.joinCode}
+					placeholder="0e0d5726-fd99-44ca-bf62-ad2d43f79204 — optional"
+					maxlength="60"
 				/>
 				<span class="mt-1 block text-[12px] text-mist-400"
-					>Not the RCON listener. With the public status page on, this adds a join page with Steam
-					links and the address to copy.</span
+					>The 36-character code players enter under "Join by code"; wardogservers.com shows it on
+					the listing. With the public status page on, this adds a join page. WARDOGS joins only
+					through its browser, so there is no connect-by-address.</span
 				></label
 			>
 			<div>
